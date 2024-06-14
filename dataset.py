@@ -11,7 +11,7 @@ class Sentinel2_Dataset(torch.utils.data.Dataset):
         mask_paths,
         transforms=None,
         seed=1337,
-        num_augmentations=3
+        num_augmentations=2
     ):
         self.img_paths = img_paths
         self.mask_paths = mask_paths
@@ -65,7 +65,6 @@ class Sentinel2_Dataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         # Load in image
         arr_x = []
-        
         for i, path_list in enumerate(self.img_paths):
             img = cv2.imread(path_list[idx])
             img = img / 255.0
@@ -83,18 +82,18 @@ class Sentinel2_Dataset(torch.utils.data.Dataset):
         sample["mask"] = tifffile.imread(self.mask_paths[idx])
 
         # Apply Data Augmentation
-        augmented_samples = []
-        for _ in range(self.num_augmentations):
-            augmented_sample = sample.copy()
-            if self.transforms:
+        if self.transforms:
+            augmented_samples = []
+            for _ in range(self.num_augmentations):
+                #augmented_sample = sample.copy()
                 augmented_sample = self.transforms(image=sample["image"], mask=sample["mask"])
-            if augmented_sample["image"].shape[-1] < 20:
-                augmented_sample["image"] = augmented_sample["image"].transpose((2, 0, 1))
-            augmented_sample["image"] = torch.tensor(augmented_sample["image"], dtype=torch.float32)
-            augmented_sample["mask"] = torch.tensor(augmented_sample["mask"], dtype=torch.long)
-            augmented_samples.append(augmented_sample)
-            
-        return augmented_samples
+                augmented_samples.append(augmented_sample)
+                if augmented_sample["image"].shape[-1] < 20:
+                    augmented_sample["image"] = augmented_sample["image"].transpose((2, 0, 1))
+            return augmented_samples
+        if sample["image"].shape[-1] < 20:
+            sample["image"] = sample["image"].transpose((2, 0, 1))
+        return sample
 
     def __len__(self):
         return len(self.mask_paths)
@@ -138,7 +137,7 @@ def get_paths(fraction=1, bands=["SWIR.png", "SWIRP.png"], seed=1337):
     return label_paths, bands_paths
 
 
-def create_splits(train_percentage=0.6, val_percentage=0.2, test_percentage=0.1):
+def create_splits(train_percentage=0.4, val_percentage=0.3, test_percentage=0.3):
     label_paths, img_paths = get_paths(fraction=1)
 
     img_paths_train = [row[: int(train_percentage * len(label_paths))] for row in img_paths]

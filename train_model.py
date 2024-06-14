@@ -18,7 +18,7 @@ if __name__ == "__main__":
     parser.add_argument('--epochs', type=int, default=20)
     parser.add_argument('--lr', type=float, default=1e-3)
 
-    train_crop_size = 128
+    train_crop_size = 256
     num_workers = 2
     pin_memory = True
     patience = 4
@@ -46,10 +46,10 @@ if __name__ == "__main__":
     test_dataset = Sentinel2_Dataset(img_paths_test, label_paths_test, transforms=None, num_augmentations=0)
 
     # Create Dataloader
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, num_workers=num_workers, shuffle=True, pin_memory=pin_memory, collate_fn=collate_fn)
+    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, num_workers=num_workers, shuffle=True, pin_memory=pin_memory, collate_fn=collate)
     val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=pin_memory)
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=pin_memory)
-
+ 
     on_gpu = torch.cuda.is_available()
 
     early_patience = patience * 3
@@ -83,21 +83,9 @@ if __name__ == "__main__":
 
         losses, batch_time, data_time = AverageMeter(), AverageMeter(), AverageMeter()
         end = time.time()
-        for iter_num, data in enumerate(train_loader):
-            all_x_data = []
-            all_targets = []
-            for augmented_samples in data:                
-                for sample in augmented_samples:
-                    all_x_data.append(sample["image"])
-                    all_targets.append(sample["mask"])
-        
-            x_data = torch.stack(all_x_data)
-            targets = torch.stack(all_targets)
-            
-            x_data, targets = x_data.cuda(non_blocking=True), targets.cuda(non_blocking=True)
-
+        for iter_num, (x_data, targets) in enumerate(train_loader):
+            x_data, targets = x_data.cuda(non_blocking=True).float(), targets.cuda(non_blocking=True).long()
             optimizer.zero_grad()
-
             preds = model(x_data)
             loss = loss_func(preds, targets)
             loss.backward()
@@ -120,34 +108,33 @@ if __name__ == "__main__":
 
         end = time.time()
         for iter_num, data in enumerate(val_loader):
-            for sample in data:
-                data_time.update(time.time() - end)
-                x_data = torch.from_numpy(sample["image"])
-                targets = torch.from_numpy(sample["mask"])
-                x_data, targets = x_data.cuda(non_blocking=True), targets.cuda(non_blocking=True)
+            data_time.update(time.time() - end)
+            x_data = data["image"].float()
+            targets = data["mask"].long()
+            x_data, targets = x_data.cuda(non_blocking=True), targets.cuda(non_blocking=True)
 
-                preds = model(x_data)
-                loss = loss_func(preds, targets)
-                losses.update(loss.detach().item(), x_data.size(0))
+            preds = model(x_data)
+            loss = loss_func(preds, targets)
+            losses.update(loss.detach().item(), x_data.size(0))
 
-                preds = torch.softmax(preds, dim=1)[:, 1]
-                preds = (preds > 0.5) * 1
+            preds = torch.softmax(preds, dim=1)[:, 1]
+            preds = (preds > 0.5) * 1
 
-                tp, fp, fn = tp_fp_fn(preds, targets)
-                assert tp >= 0 and fp >= 0 and fn >= 0, f"Negative tp/fp/fn: tp: {tp}, fp: {fp}, fn: {fn}"
-                tps += tp
-                fps += fp
-                fns += fn
+            tp, fp, fn = tp_fp_fn(preds, targets)
+            assert tp >= 0 and fp >= 0 and fn >= 0, f"Negative tp/fp/fn: tp: {tp}, fp: {fp}, fn: {fn}"
+            tps += tp
+            fps += fp
+            fns += fn
 
-                batch_time.update(time.time() - end)
-                end = time.time()
+            batch_time.update(time.time() - end)
+            end = time.time()
 
-            iou_global = tps / (tps + fps + fns)
+        iou_global = tps / (tps + fps + fns)
 
-            ## When validation IoU improved, save model. If not, increment the lr scheduler and early stopping counters
-            early_stopping_metric = iou_global
-            if curr_epoch_num > 6:
-                scheduler.step(early_stopping_metric)
+        ## When validation IoU improved, save model. If not, increment the lr scheduler and early stopping counters
+        early_stopping_metric = iou_global
+        if curr_epoch_num > 6:
+            scheduler.step(early_stopping_metric)
 
         print(f"Ep: [{curr_epoch_num}] ValT: {(batch_time.avg * len(val_loader)) / 60:.1f} min, BatchT: {batch_time.avg:.3f}s, "
             f"DataT: {data_time.avg:.3f}s, Loss: {losses.avg:.4f}, Global IoU: {iou_global:.4f} (val)")
@@ -200,21 +187,20 @@ if __name__ == "__main__":
     probs = []
     torch.set_grad_enabled(False)
     for data in test_loader:
-        for sample in data:
-            x_data = sample["image"].float()
-            targets = sample["mask"].long()
-            x_data, targets = x_data.cuda(non_blocking=True), targets.cuda(non_blocking=True)
+        x_data = data["image"].float()
+        targets = data["mask"].long()
+        x_data, targets = x_data.cuda(non_blocking=True), targets.cuda(non_blocking=True)
 
-            preds = torch.softmax(model(x_data), dim=1)[:, 1]
-            preds = (preds > 0.5) * 1
+        preds = torch.softmax(model(x_data), dim=1)[:, 1]
+        preds = (preds > 0.5) * 1
+        
+        tp, fp, fn = tp_fp_fn(preds, targets)
+        assert tp >= 0 and fp >= 0 and fn >= 0, f"Negative tp/fp/fn: tp: {tp}, fp: {fp}, fn: {fn}"
+        tps += tp
+        fps += fp
+        fns += fn
             
-            tp, fp, fn = tp_fp_fn(preds, targets)
-            assert tp >= 0 and fp >= 0 and fn >= 0, f"Negative tp/fp/fn: tp: {tp}, fp: {fp}, fn: {fn}"
-            tps += tp
-            fps += fp
-            fns += fn
-                
-            probs.append(preds.cpu().numpy())
+        probs.append(preds.cpu().numpy())
         
     iou_global = tps / (tps + fps + fns)
         

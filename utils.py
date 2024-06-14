@@ -44,8 +44,15 @@ def tp_fp_fn(preds, targets):
     return tp.item(), fp.item(), fn.item()
 
 
-def collate_fn(batch):
-    return [item for sublist in batch for item in sublist]
+def collate(batch):
+    all_x_data = []
+    all_targets = []
+    for augmented_samples in batch:
+        for sample in augmented_samples:
+            all_x_data.append(torch.tensor(sample["image"]))
+            all_targets.append(torch.tensor(sample["mask"]))
+    return torch.stack(all_x_data), torch.stack(all_targets)  
+    #return [item for sublist in batch for item in sublist]
 
 class AverageMeter(object):
     """
