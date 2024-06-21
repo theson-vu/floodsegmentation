@@ -11,7 +11,7 @@ class Sentinel2_Dataset(torch.utils.data.Dataset):
         mask_paths,
         transforms=None,
         seed=1337,
-        num_augmentations=2
+        num_augmentations=4
     ):
         self.img_paths = img_paths
         self.mask_paths = mask_paths
@@ -61,7 +61,21 @@ class Sentinel2_Dataset(torch.utils.data.Dataset):
     
     def normalize_pwater(self, image, epsilon=1e-6):
         return (image - self.pwater_mean) / (self.pwater_std)
+    
 
+    def compute_amplitude_phase(self, image_channel):
+        # Compute the 2D DFT of the channel
+        dft = np.fft.fft2(image_channel)
+        dft_shifted = np.fft.fftshift(dft)
+        
+        # Compute the amplitude spectrum
+        amplitude_spectrum = np.abs(dft_shifted)
+        
+        # Compute the phase spectrum
+        phase_spectrum = np.angle(dft_shifted)
+        
+        return amplitude_spectrum, phase_spectrum
+    
     def __getitem__(self, idx):
         # Load in image
         arr_x = []
@@ -90,7 +104,45 @@ class Sentinel2_Dataset(torch.utils.data.Dataset):
                 augmented_samples.append(augmented_sample)
                 if augmented_sample["image"].shape[-1] < 20:
                     augmented_sample["image"] = augmented_sample["image"].transpose((2, 0, 1))
-            return augmented_samples
+
+            augmented_samples_with_spectra = []
+            for augmented_sample in augmented_samples:
+                # Extract image and compute amplitude and phase
+                img = augmented_sample["image"].transpose((1, 2, 0))  # Convert back to HWC format
+                amplitude_channels = []
+                phase_channels = []
+                for c in img:
+                    amplitude, phase = self.compute_amplitude_phase(c)
+                    amplitude_channels.append(amplitude)
+                    phase_channels.append(phase)
+
+                # Normalize amplitude and phase spectra
+                amplitude_channels = np.stack(amplitude_channels, axis=-1).transpose((2, 0, 1))
+                phase_channels = np.stack(phase_channels, axis=-1).transpose((2, 0, 1))
+
+                # Append amplitude and phase to the augmented image
+                augmented_image_with_spectra = np.concatenate([img, amplitude_channels, phase_channels], axis=-1)
+                augmented_sample["image"] = augmented_image_with_spectra.transpose((2, 0, 1))  # Convert back to CHW format
+                augmented_samples_with_spectra.append(augmented_sample)
+            return augmented_samples_with_spectra
+        
+        # Compute amplitude and phase for each channel in the original image
+        img = arr_x
+        amplitude_channels = []
+        phase_channels = []
+        for c in img:
+            amplitude, phase = self.compute_amplitude_phase(c)
+            amplitude_channels.append(amplitude)
+            phase_channels.append(phase)
+
+        # Normalize amplitude and phase spectra
+        amplitude_channels = np.stack(amplitude_channels, axis=-1).transpose((2, 0, 1))
+        phase_channels = np.stack(phase_channels, axis=-1).transpose((2, 0, 1))
+
+        # Append amplitude and phase to the original image
+        arr_x_with_spectra = np.concatenate([arr_x, amplitude_channels, phase_channels], axis=-1)
+        sample["image"] = arr_x_with_spectra.transpose((2, 0, 1))  # Convert to CHW format
+
         if sample["image"].shape[-1] < 20:
             sample["image"] = sample["image"].transpose((2, 0, 1))
         return sample
@@ -108,7 +160,7 @@ def mask_to_img(label, color_dict):
 
 
 
-def get_paths(fraction=1, bands=["SWIR.png", "SWIRP.png"], seed=1337):
+def get_paths(fraction=1, bands=["SWIRP.png"], seed=1337):
     """
     Returns:
         label_paths: list of all labelpaths

@@ -4,7 +4,7 @@ from dataset import Sentinel2_Dataset, create_splits
 import numpy as np
 import torch
 from utils import *
-from models import Unet
+from models import *
 import os
 import time
 import glob
@@ -18,11 +18,12 @@ if __name__ == "__main__":
     parser.add_argument('--epochs', type=int, default=20)
     parser.add_argument('--lr', type=float, default=1e-3)
 
-    train_crop_size = 256
-    num_workers = 2
+    train_crop_size = 128
+    num_augmentations = 4
+    num_workers = 4
     pin_memory = True
     patience = 4
-    dim = 6
+    dim = 9
 
     args = vars(parser.parse_args())
     experiment_name = args["name"]
@@ -41,7 +42,7 @@ if __name__ == "__main__":
         ]
     )
 
-    train_dataset = Sentinel2_Dataset(img_paths_train, label_paths_train, transforms=train_transforms)
+    train_dataset = Sentinel2_Dataset(img_paths_train, label_paths_train, transforms=train_transforms, num_augmentations=num_augmentations)
     val_dataset = Sentinel2_Dataset(img_paths_val, label_paths_val, transforms=None, num_augmentations=0)
     test_dataset = Sentinel2_Dataset(img_paths_test, label_paths_test, transforms=None, num_augmentations=0)
 
@@ -56,16 +57,15 @@ if __name__ == "__main__":
     log_path = f"trained_models/{experiment_name}"
     os.makedirs(log_path, exist_ok=True)
 
-    model = Unet(dim, 2)
+    model = UnetLarge(dim, 2)
 
     loss_func = XEDiceLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer,
-        mode="max",
-        factor=0.5,
+        mode="min",
+        factor=0.3,
         patience=patience,
-        verbose=True,
     )
 
     model = model.cuda()
@@ -175,7 +175,7 @@ if __name__ == "__main__":
     # load best model
     model_weights_path = glob.glob(f"trained_models/{experiment_name}/best_iou*")[0]
 
-    model =  Unet(dim, 2)
+    model =  UnetLarge(dim, 2)
     model = model.cuda()
     model.eval()
 
@@ -211,23 +211,28 @@ if __name__ == "__main__":
     probs.shape
     print(f"Test set global IoU: {iou_global:.4f}")
 
-    show_how_many = 10
+    show_how_many = 20
     alpha = 0.5
     for k in range(show_how_many):
         rand_int = np.random.randint(len(test_dataset))
         label_path = test_dataset.mask_paths[rand_int]
 
-        f, axarr = plt.subplots(1, 2, figsize=(30, 10))
+        f, axarr = plt.subplots(1, 3, figsize=(30, 10))
         pred = probs[rand_int]
         pred = np.ma.masked_where(pred == 0, pred)
 
         label = tifffile.imread(label_path)
         label = np.ma.masked_where(label == 0, label)
 
+        swirp = tifffile.imread(label_path.replace("LabelWater.tif", "SWIRP.png"))
+
         axarr[0].set_title("Ground Truth")
         axarr[0].imshow(label, cmap="cool", alpha=alpha)
         axarr[1].set_title("Prediction")
         axarr[1].imshow(pred, cmap="cool", alpha=alpha)
+        axarr[2].set_title("SWIRP")
+        axarr[2].imshow(swirp, cmap="cool", alpha=alpha)
+
 
         plt.tight_layout()
         plt.savefig(f'trained_models/{experiment_name}/{label_path.split("\\")[-2]}.png')
