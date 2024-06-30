@@ -1,5 +1,8 @@
 import torch.nn as nn
 import torch
+import torchvision.models as models
+import torch.nn.functional as F
+
 
 class XEDiceLoss(nn.Module):
     """
@@ -37,6 +40,34 @@ class XEDiceLoss(nn.Module):
     def get_name(self):
         return "XEDiceLoss"
     
+
+class ResNet34FeatureExtractor(nn.Module):
+    def __init__(self, output_channels):
+        super(ResNet34FeatureExtractor, self).__init__()
+        self.resnet = models.resnet34(pretrained=True)
+        
+        # Remove the fully connected layer
+        self.resnet = nn.Sequential(*list(self.resnet.children())[:-2])
+        
+        # Upsample layers to match the input dimensions
+        self.upsample1 = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+        self.upsample2 = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+        self.upsample3 = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+        self.upsample4 = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+        
+        # Convolutional layer to adjust the number of channels
+        self.conv1x1 = nn.Conv2d(512, output_channels, kernel_size=1)
+
+    def forward(self, x):
+        x = self.resnet(x)
+        x = self.upsample1(x)
+        x = self.upsample2(x)
+        x = self.upsample3(x)
+        x = self.upsample4(x)
+        x = self.conv1x1(x)
+        return x
+    
+
 def tp_fp_fn(preds, targets):
     tp = torch.sum(preds * targets)
     fp = torch.sum(preds) - tp

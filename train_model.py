@@ -1,4 +1,4 @@
-import albumentations
+import albumentations as A
 import argparse
 from dataset import Sentinel2_Dataset, create_splits
 import numpy as np
@@ -10,14 +10,19 @@ import time
 import glob
 import matplotlib.pyplot as plt
 import tifffile
+import random
+import wandb
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--name', nargs=1, type=str, default="test")
-    parser.add_argument('--batchsize', type=int, default=16)
+    parser.add_argument('--batchsize', type=int, default=8)
     parser.add_argument('--epochs', type=int, default=20)
     parser.add_argument('--lr', type=float, default=1e-3)
+    parser.add_argument('--seed', type=int, default=42)
+    parser.add_argument('--dft', type=bool, default=True)
 
+    
     train_crop_size = 128
     num_augmentations = 4
     num_workers = 4
@@ -30,15 +35,37 @@ if __name__ == "__main__":
     batch_size = args["batchsize"]
     n_epochs = args["epochs"]
     lr = args["lr"]
+    seed = args["seed"]
 
-    img_paths_train, img_paths_val, img_paths_test, label_paths_train, label_paths_val, label_paths_test = create_splits()
+    wandb.login()
+    wandb.init(project="Master")
+    wandb.log({
+        "batchsize": batch_size,
+        "epochs": n_epochs,
+        "learningrate": lr,
+        "seed": seed,
+        "cropsize": train_crop_size,
+        "num_augmentations": num_augmentations,
+        "num_workes": num_workers,
+        })
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
 
-    train_transforms = albumentations.Compose(
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
+    img_paths_train, img_paths_val, img_paths_test, label_paths_train, label_paths_val, label_paths_test = create_splits(seed=seed)
+
+    train_transforms = A.Compose(
         [
-            albumentations.RandomCrop(train_crop_size, train_crop_size),
-            albumentations.RandomRotate90(),
-            albumentations.HorizontalFlip(),
-            albumentations.VerticalFlip()
+            A.RandomCrop(train_crop_size, train_crop_size),
+            A.RandomRotate90(),
+            A.HorizontalFlip(),
+            A.VerticalFlip()
         ]
     )
 
@@ -130,7 +157,7 @@ if __name__ == "__main__":
             end = time.time()
 
         iou_global = tps / (tps + fps + fns)
-
+        #wandb.log({"iou_global": iou_global})
         ## When validation IoU improved, save model. If not, increment the lr scheduler and early stopping counters
         early_stopping_metric = iou_global
         if curr_epoch_num > 6:
@@ -224,7 +251,7 @@ if __name__ == "__main__":
         label = tifffile.imread(label_path)
         label = np.ma.masked_where(label == 0, label)
 
-        swirp = tifffile.imread(label_path.replace("LabelWater.tif", "SWIRP.png"))
+        swirp = plt.imread(label_path.replace("LabelWater.tif", "SWIRP.png"))
 
         axarr[0].set_title("Ground Truth")
         axarr[0].imshow(label, cmap="cool", alpha=alpha)
