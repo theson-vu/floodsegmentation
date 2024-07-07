@@ -1,6 +1,6 @@
 import albumentations as A
 import argparse
-from dataset import Sentinel2_Dataset, create_splits
+from dataset import Sentinel2_Dataset, create_splits, S2Dataset
 import numpy as np
 import torch
 from utils import *
@@ -15,31 +15,41 @@ import wandb
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--name', nargs=1, type=str, default="test")
+    parser.add_argument('--name', type=str, default="test")
     parser.add_argument('--batchsize', type=int, default=8)
     parser.add_argument('--epochs', type=int, default=20)
     parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--seed', type=int, default=42)
-    parser.add_argument('--dft', type=bool, default=True)
+    parser.add_argument('--naug', type=int, default=2)
+    parser.add_argument('--dft', action="store_true")
 
-    
+    train_percentage, val_percentage, test_percentage = 0.6, 0.2, 0.2
     train_crop_size = 128
-    num_augmentations = 4
     num_workers = 4
     pin_memory = True
     patience = 4
-    dim = 9
 
-    args = vars(parser.parse_args())
+    args = parser.parse_args()
+    experiment_name = args.name
+    num_augmentations = args.naug
+    batch_size = args.batchsize
+    n_epochs = args.epochs
+    lr = args.lr
+    seed = args.seed
+    dft = args.dft
+
+    """args = vars(parser.parse_args())
     experiment_name = args["name"]
     batch_size = args["batchsize"]
     n_epochs = args["epochs"]
     lr = args["lr"]
     seed = args["seed"]
+    dft = args.dft"""
 
     wandb.login()
-    wandb.init(project="Master")
+    wandb.init(project="Master", name=experiment_name)
     wandb.log({
+        "dft": dft,
         "batchsize": batch_size,
         "epochs": n_epochs,
         "learningrate": lr,
@@ -47,6 +57,7 @@ if __name__ == "__main__":
         "cropsize": train_crop_size,
         "num_augmentations": num_augmentations,
         "num_workes": num_workers,
+        "split percentages": (train_percentage, val_percentage, test_percentage),
         })
     random.seed(seed)
     np.random.seed(seed)
@@ -58,33 +69,36 @@ if __name__ == "__main__":
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
 
-    img_paths_train, img_paths_val, img_paths_test, label_paths_train, label_paths_val, label_paths_test = create_splits(seed=seed)
+    img_paths_train, img_paths_val, img_paths_test, label_paths_train, label_paths_val, label_paths_test = create_splits(
+        train_percentage=train_percentage,
+        val_percentage=val_percentage,
+        test_percentage=test_percentage,
+        seed=seed
+        )
 
-    train_transforms = A.Compose(
+    train_transforms = A.ReplayCompose(
         [
             A.RandomCrop(train_crop_size, train_crop_size),
             A.RandomRotate90(),
             A.HorizontalFlip(),
             A.VerticalFlip()
-        ]
-    )
+        ], additional_targets={'mask': 'image'})
 
-    train_dataset = Sentinel2_Dataset(img_paths_train, label_paths_train, transforms=train_transforms, num_augmentations=num_augmentations)
-    val_dataset = Sentinel2_Dataset(img_paths_val, label_paths_val, transforms=None, num_augmentations=0)
-    test_dataset = Sentinel2_Dataset(img_paths_test, label_paths_test, transforms=None, num_augmentations=0)
+    train_dataset = S2Dataset(img_paths_train, label_paths_train, transforms=train_transforms, num_augmentations=num_augmentations, dft_flag=dft)
+    val_dataset = S2Dataset(img_paths_val, label_paths_val, transforms=None, num_augmentations=0, dft_flag=dft)
+    test_dataset = S2Dataset(img_paths_test, label_paths_test, transforms=None, num_augmentations=0, dft_flag=dft)
 
     # Create Dataloader
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, num_workers=num_workers, shuffle=True, pin_memory=pin_memory, collate_fn=collate)
-    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=pin_memory)
-    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=pin_memory)
+    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=pin_memory, collate_fn=collate)
+    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=pin_memory, collate_fn=collate)
  
     on_gpu = torch.cuda.is_available()
 
     early_patience = patience * 3
     log_path = f"trained_models/{experiment_name}"
     os.makedirs(log_path, exist_ok=True)
-
-    model = UnetLarge(dim, 2)
+    model = UnetLarge(train_dataset.dim, 2)
 
     loss_func = XEDiceLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
@@ -110,7 +124,7 @@ if __name__ == "__main__":
 
         losses, batch_time, data_time = AverageMeter(), AverageMeter(), AverageMeter()
         end = time.time()
-        for iter_num, (x_data, targets) in enumerate(train_loader):
+        for iter_num, (x_data, targets) in enumerate(train_loader):            
             x_data, targets = x_data.cuda(non_blocking=True).float(), targets.cuda(non_blocking=True).long()
             optimizer.zero_grad()
             preds = model(x_data)
@@ -132,12 +146,11 @@ if __name__ == "__main__":
 
         batch_time, data_time, losses = AverageMeter(), AverageMeter(), AverageMeter()
         tps, fps, fns = 0, 0, 0
-
         end = time.time()
-        for iter_num, data in enumerate(val_loader):
-            data_time.update(time.time() - end)
-            x_data = data["image"].float()
-            targets = data["mask"].long()
+
+        for iter_num, (x_data, targets) in enumerate(val_loader):
+            x_data = x_data.float()
+            targets = targets.long()                  
             x_data, targets = x_data.cuda(non_blocking=True), targets.cuda(non_blocking=True)
 
             preds = model(x_data)
@@ -147,7 +160,7 @@ if __name__ == "__main__":
             preds = torch.softmax(preds, dim=1)[:, 1]
             preds = (preds > 0.5) * 1
 
-            tp, fp, fn = tp_fp_fn(preds, targets)
+            tp, fp, fn, tn = tp_tn_fp_fn(preds, targets)
             assert tp >= 0 and fp >= 0 and fn >= 0, f"Negative tp/fp/fn: tp: {tp}, fp: {fp}, fn: {fn}"
             tps += tp
             fps += fp
@@ -201,8 +214,7 @@ if __name__ == "__main__":
 
     # load best model
     model_weights_path = glob.glob(f"trained_models/{experiment_name}/best_iou*")[0]
-
-    model =  UnetLarge(dim, 2)
+    model =  UnetLarge(test_dataset.dim, 2)
     model = model.cuda()
     model.eval()
 
@@ -210,25 +222,26 @@ if __name__ == "__main__":
     model.load_state_dict(cp["model_state_dict"])
     print(f"Loaded {model_weights_path} at epoch {cp['epoch_num']}")
 
-    tps, fps, fns = 0, 0, 0
+    tps, fps, fns, tns = 0, 0, 0,0
     probs = []
     torch.set_grad_enabled(False)
-    for data in test_loader:
-        x_data = data["image"].float()
-        targets = data["mask"].long()
+    for iter_num, (x_data, targets) in enumerate(test_loader):
+        x_data = x_data.float()
+        targets = targets.long()  
         x_data, targets = x_data.cuda(non_blocking=True), targets.cuda(non_blocking=True)
 
         preds = torch.softmax(model(x_data), dim=1)[:, 1]
         preds = (preds > 0.5) * 1
         
-        tp, fp, fn = tp_fp_fn(preds, targets)
+        tp, fp, fn, tn = tp_tn_fp_fn(preds, targets)
         assert tp >= 0 and fp >= 0 and fn >= 0, f"Negative tp/fp/fn: tp: {tp}, fp: {fp}, fn: {fn}"
         tps += tp
+        tns += tn
         fps += fp
         fns += fn
             
         probs.append(preds.cpu().numpy())
-        
+    
     iou_global = tps / (tps + fps + fns)
         
     last_prob = probs[-1].copy()
@@ -236,7 +249,14 @@ if __name__ == "__main__":
 
     probs = np.concatenate((probs, last_prob), 0)
     probs.shape
+    wandb.log({"iou_global": iou_global,
+               "true positives": tps,
+               "true negatives": tns,
+               "false negatives": fns,
+               "false positives": fps})
     print(f"Test set global IoU: {iou_global:.4f}")
+
+    torch.cuda.empty_cache()
 
     show_how_many = 20
     alpha = 0.5

@@ -54,6 +54,7 @@ class ResNet34FeatureExtractor(nn.Module):
         self.upsample2 = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
         self.upsample3 = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
         self.upsample4 = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+        self.upsample5 = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
         
         # Convolutional layer to adjust the number of channels
         self.conv1x1 = nn.Conv2d(512, output_channels, kernel_size=1)
@@ -64,15 +65,17 @@ class ResNet34FeatureExtractor(nn.Module):
         x = self.upsample2(x)
         x = self.upsample3(x)
         x = self.upsample4(x)
+        x = self.upsample5(x)
         x = self.conv1x1(x)
         return x
     
 
-def tp_fp_fn(preds, targets):
+def tp_tn_fp_fn(preds, targets):
     tp = torch.sum(preds * targets)
     fp = torch.sum(preds) - tp
     fn = torch.sum(targets) - tp
-    return tp.item(), fp.item(), fn.item()
+    tn = torch.sum((1 - preds) * (1 - targets))
+    return tp.item(), fp.item(), fn.item(), tn.item()
 
 
 def collate(batch):
