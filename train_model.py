@@ -1,6 +1,6 @@
 import albumentations as A
 import argparse
-from dataset import Sentinel2_Dataset, create_splits, S2Dataset
+from dataset import create_splits, S2Dataset
 import numpy as np
 import torch
 from utils import *
@@ -13,6 +13,7 @@ import tifffile
 import random
 import wandb
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--name', type=str, default="test")
@@ -24,7 +25,7 @@ if __name__ == "__main__":
     parser.add_argument('--dft', action="store_true")
 
     train_percentage, val_percentage, test_percentage = 0.6, 0.2, 0.2
-    train_crop_size = 128
+    train_crop_size = 256
     num_workers = 4
     pin_memory = True
     patience = 4
@@ -37,14 +38,6 @@ if __name__ == "__main__":
     lr = args.lr
     seed = args.seed
     dft = args.dft
-
-    """args = vars(parser.parse_args())
-    experiment_name = args["name"]
-    batch_size = args["batchsize"]
-    n_epochs = args["epochs"]
-    lr = args["lr"]
-    seed = args["seed"]
-    dft = args.dft"""
 
     wandb.login()
     wandb.init(project="Master", name=experiment_name)
@@ -98,14 +91,14 @@ if __name__ == "__main__":
     early_patience = patience * 3
     log_path = f"trained_models/{experiment_name}"
     os.makedirs(log_path, exist_ok=True)
-    model = UnetLarge(train_dataset.dim, 2)
+    model = ResAttUnet(1, 2, 2)
 
     loss_func = XEDiceLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer,
         mode="min",
-        factor=0.3,
+        factor=0.2,
         patience=patience,
     )
 
@@ -124,15 +117,23 @@ if __name__ == "__main__":
 
         losses, batch_time, data_time = AverageMeter(), AverageMeter(), AverageMeter()
         end = time.time()
-        for iter_num, (x_data, targets) in enumerate(train_loader):            
-            x_data, targets = x_data.cuda(non_blocking=True).float(), targets.cuda(non_blocking=True).long()
+        for iter_num, (X, amps, phases, targets) in enumerate(train_loader):
+            ap = torch.tensor(np.concatenate([amps, phases], axis=1))
+
+            X = X.cuda(non_blocking=True).float()
+            ap = ap.cuda(non_blocking=True).float()
+            targets = targets.cuda(non_blocking=True).long()
+
             optimizer.zero_grad()
-            preds = model(x_data)
+            preds = model(X, ap)
+            
+            
+            # Move to GPU
             loss = loss_func(preds, targets)
             loss.backward()
             optimizer.step()
 
-            losses.update(loss.detach().item(), x_data.size(0))
+            losses.update(loss.detach().item(), X.size(0))
 
             batch_time.update(time.time() - end)
             end = time.time()
@@ -148,14 +149,17 @@ if __name__ == "__main__":
         tps, fps, fns = 0, 0, 0
         end = time.time()
 
-        for iter_num, (x_data, targets) in enumerate(val_loader):
-            x_data = x_data.float()
-            targets = targets.long()                  
-            x_data, targets = x_data.cuda(non_blocking=True), targets.cuda(non_blocking=True)
+        for iter_num, (X, amps, phases, targets) in enumerate(val_loader):
+            ap = torch.tensor(np.concatenate([amps, phases], axis=1))
+            X = X.cuda(non_blocking=True).float()
+            ap = ap.cuda(non_blocking=True).float()
+            targets = targets.cuda(non_blocking=True).long()
 
-            preds = model(x_data)
+            optimizer.zero_grad()
+            preds = model(X, ap)
+
             loss = loss_func(preds, targets)
-            losses.update(loss.detach().item(), x_data.size(0))
+            losses.update(loss.detach().item(), X.size(0))
 
             preds = torch.softmax(preds, dim=1)[:, 1]
             preds = (preds > 0.5) * 1
@@ -170,7 +174,8 @@ if __name__ == "__main__":
             end = time.time()
 
         iou_global = tps / (tps + fps + fns)
-        #wandb.log({"iou_global": iou_global})
+        wandb.log({"iou_train": iou_global,
+                   "loss_train": losses.avg})
         ## When validation IoU improved, save model. If not, increment the lr scheduler and early stopping counters
         early_stopping_metric = iou_global
         if curr_epoch_num > 6:
@@ -214,7 +219,7 @@ if __name__ == "__main__":
 
     # load best model
     model_weights_path = glob.glob(f"trained_models/{experiment_name}/best_iou*")[0]
-    model =  UnetLarge(test_dataset.dim, 2)
+    model =  ResAttUnet(1, 2, 2)
     model = model.cuda()
     model.eval()
 
@@ -225,12 +230,16 @@ if __name__ == "__main__":
     tps, fps, fns, tns = 0, 0, 0,0
     probs = []
     torch.set_grad_enabled(False)
-    for iter_num, (x_data, targets) in enumerate(test_loader):
-        x_data = x_data.float()
-        targets = targets.long()  
-        x_data, targets = x_data.cuda(non_blocking=True), targets.cuda(non_blocking=True)
+    for iter_num, (X, amps, phases, targets) in enumerate(test_loader):
+        ap = torch.tensor(np.concatenate([amps, phases], axis=1))
+        X = X.cuda(non_blocking=True).float()
+        ap = ap.cuda(non_blocking=True).float()
+        targets = targets.cuda(non_blocking=True).long()
 
-        preds = torch.softmax(model(x_data), dim=1)[:, 1]
+        optimizer.zero_grad()
+        preds = model(X, ap)
+
+        preds = torch.softmax(model(X, ap), dim=1)[:, 1]
         preds = (preds > 0.5) * 1
         
         tp, fp, fn, tn = tp_tn_fp_fn(preds, targets)
@@ -248,7 +257,7 @@ if __name__ == "__main__":
     probs = np.array(probs[:-1]).reshape((-1, 512, 512))
 
     probs = np.concatenate((probs, last_prob), 0)
-    probs.shape
+    probs.shape 
     wandb.log({"iou_global": iou_global,
                "true positives": tps,
                "true negatives": tns,

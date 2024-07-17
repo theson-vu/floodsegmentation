@@ -2,12 +2,10 @@ import torch.nn as nn
 import torch
 import torchvision.models as models
 import torch.nn.functional as F
+import numpy as np
 
 
 class XEDiceLoss(nn.Module):
-    """
-    Mixture of alpha * CrossEntropy and (1 - alpha) * DiceLoss.
-    """
     def __init__(self, alpha=0.5, EPS=1e-7):
         super().__init__()
         self.xe = nn.CrossEntropyLoss()
@@ -15,15 +13,10 @@ class XEDiceLoss(nn.Module):
         self.EPS = EPS
 
     def forward(self, preds, targets):
-        """xe_loss = self.xe(preds, targets)
+        # Convert targets to float32 for Cross-Entropy loss
+        #targets = targets.float()
         
-        no_ignore = targets.ne(255)
-        targets = targets.masked_select(no_ignore)
-
-        preds = torch.softmax(preds, dim=1)[:, 1]
-        targets = (targets == 1).float()
-        dice_loss = 1 - (2.0 * torch.sum(preds * targets)) / (torch.sum(preds + targets) + EPS)"""
-        # Compute CrossEntropy loss
+        # Compute Cross-Entropy loss
         xe_loss = self.xe(preds, targets)
 
         # Compute Dice loss
@@ -36,9 +29,6 @@ class XEDiceLoss(nn.Module):
 
         # Compute weighted combination of CrossEntropy and Dice losses
         return self.alpha * xe_loss + (1 - self.alpha) * dice_loss 
-
-    def get_name(self):
-        return "XEDiceLoss"
     
 
 class ResNet34FeatureExtractor(nn.Module):
@@ -80,13 +70,29 @@ def tp_tn_fp_fn(preds, targets):
 
 def collate(batch):
     all_x_data = []
+    all_amps = []
+    all_phases = []
     all_targets = []
+    
     for augmented_samples in batch:
         for sample in augmented_samples:
-            all_x_data.append(torch.tensor(sample["image"]))
-            all_targets.append(torch.tensor(sample["mask"]))
-    return torch.stack(all_x_data), torch.stack(all_targets)  
-    #return [item for sublist in batch for item in sublist]
+            all_x_data.append(np.array(sample["image"]))
+            all_targets.append(np.array(sample["mask"]))
+            if "amplitude" in sample:
+                all_amps.append(np.array(sample["amplitude"]))
+                all_phases.append(np.array(sample["phase"]))
+    
+    # Convert lists to NumPy arrays and stack them
+    all_x_data = torch.tensor(np.stack(all_x_data))
+    all_targets = torch.tensor(np.stack(all_targets), dtype=torch.long)
+    
+    if all_amps:
+        all_amps = torch.tensor(np.stack(all_amps))
+        all_phases = torch.tensor(np.stack(all_phases))
+    else:
+        all_amps, all_phases = torch.empty(0), torch.empty(0)
+    return all_x_data, all_amps, all_phases, all_targets
+
 
 class AverageMeter(object):
     """
