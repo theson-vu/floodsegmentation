@@ -78,19 +78,15 @@ def collate(batch):
         for sample in augmented_samples:
             all_x_data.append(np.array(sample["image"]))
             all_targets.append(np.array(sample["mask"]))
-            if "amplitude" in sample:
-                all_amps.append(np.array(sample["amplitude"]))
-                all_phases.append(np.array(sample["phase"]))
-    
+            all_amps.append(np.array(sample["amplitude"]))
+            all_phases.append(np.array(sample["phase"]))   
+
     # Convert lists to NumPy arrays and stack them
     all_x_data = torch.tensor(np.stack(all_x_data))
-    all_targets = torch.tensor(np.stack(all_targets), dtype=torch.long)
-    
-    if all_amps:
-        all_amps = torch.tensor(np.stack(all_amps))
-        all_phases = torch.tensor(np.stack(all_phases))
-    else:
-        all_amps, all_phases = torch.empty(0), torch.empty(0)
+    all_targets = torch.tensor(np.stack(all_targets))
+    all_amps = torch.tensor(np.stack(all_amps))
+    all_phases = torch.tensor(np.stack(all_phases))
+
     return all_x_data, all_amps, all_phases, all_targets
 
 

@@ -26,7 +26,7 @@ if __name__ == "__main__":
 
     train_percentage, val_percentage, test_percentage = 0.6, 0.2, 0.2
     train_crop_size = 256
-    num_workers = 4
+    num_workers = 6
     pin_memory = True
     patience = 4
 
@@ -91,7 +91,7 @@ if __name__ == "__main__":
     early_patience = patience * 3
     log_path = f"trained_models/{experiment_name}"
     os.makedirs(log_path, exist_ok=True)
-    model = ResAttUnet(1, 2, 2)
+    model = UnetLarge(3, 2)
 
     loss_func = XEDiceLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
@@ -109,7 +109,7 @@ if __name__ == "__main__":
     best_metric, best_metric_epoch, early_stopping_metric = 0, 0, 0
     early_stop_counter, best_val_early_stopping_metric = 0, 0
     early_stop_flag, start_time = False, time.time()
-
+    print("Start training")
     for curr_epoch_num in range(1, n_epochs):
         ## Part 1: Training loop with Model weights updating
         model.train()
@@ -118,14 +118,11 @@ if __name__ == "__main__":
         losses, batch_time, data_time = AverageMeter(), AverageMeter(), AverageMeter()
         end = time.time()
         for iter_num, (X, amps, phases, targets) in enumerate(train_loader):
-            ap = torch.tensor(np.concatenate([amps, phases], axis=1))
-
+            #ap = torch.tensor(np.concatenate([amps, phases], axis=1)).cuda(non_blocking=True).float()
             X = X.cuda(non_blocking=True).float()
-            ap = ap.cuda(non_blocking=True).float()
             targets = targets.cuda(non_blocking=True).long()
-
             optimizer.zero_grad()
-            preds = model(X, ap)
+            preds = model(X)
             
             
             # Move to GPU
@@ -150,13 +147,12 @@ if __name__ == "__main__":
         end = time.time()
 
         for iter_num, (X, amps, phases, targets) in enumerate(val_loader):
-            ap = torch.tensor(np.concatenate([amps, phases], axis=1))
+            #ap = torch.tensor(np.concatenate([amps, phases], axis=1)).cuda(non_blocking=True).float()
             X = X.cuda(non_blocking=True).float()
-            ap = ap.cuda(non_blocking=True).float()
             targets = targets.cuda(non_blocking=True).long()
 
             optimizer.zero_grad()
-            preds = model(X, ap)
+            preds = model(X)
 
             loss = loss_func(preds, targets)
             losses.update(loss.detach().item(), X.size(0))
@@ -213,13 +209,15 @@ if __name__ == "__main__":
         if early_stop_counter > early_patience:
             print("Early Stopping")
             break
+        torch.cuda.empty_cache()
     torch.cuda.empty_cache()
+    
 
     print(f"Best validation IoU of {best_metric:.5f} in epoch {best_metric_epoch}.")
 
     # load best model
     model_weights_path = glob.glob(f"trained_models/{experiment_name}/best_iou*")[0]
-    model =  ResAttUnet(1, 2, 2)
+    model =  UnetLarge(3, 2)
     model = model.cuda()
     model.eval()
 
@@ -231,15 +229,14 @@ if __name__ == "__main__":
     probs = []
     torch.set_grad_enabled(False)
     for iter_num, (X, amps, phases, targets) in enumerate(test_loader):
-        ap = torch.tensor(np.concatenate([amps, phases], axis=1))
+        #ap = torch.tensor(np.concatenate([amps, phases], axis=1)).cuda(non_blocking=True).float()
         X = X.cuda(non_blocking=True).float()
-        ap = ap.cuda(non_blocking=True).float()
         targets = targets.cuda(non_blocking=True).long()
 
         optimizer.zero_grad()
-        preds = model(X, ap)
+        preds = model(X)
 
-        preds = torch.softmax(model(X, ap), dim=1)[:, 1]
+        preds = torch.softmax(model(X), dim=1)[:, 1]
         preds = (preds > 0.5) * 1
         
         tp, fp, fn, tn = tp_tn_fp_fn(preds, targets)

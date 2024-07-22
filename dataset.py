@@ -160,65 +160,58 @@ class S2Dataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         replay_params = None
-        mask = None
-        sample = []
-        for i, c in enumerate(self.data_classes):
-            mask = tifffile.imread(self.mask_paths[idx])
+        samples = []
+        mask = tifffile.imread(self.mask_paths[idx])
+        for c in self.data_classes:
+            img = None
             if c.data_paths[idx].endswith(".tif"):
                 img = tifffile.imread(c.data_paths[idx])
             elif c.data_paths[idx].endswith(".png"):
                 img = cv2.imread(c.data_paths[idx]) / 255.0
-            if img.ndim == 2:  # Single-channel image
+            if img.ndim == 2:
                 img = np.expand_dims(img, axis=-1)
             normalized_img = self.normalize(img, c.mean, c.std)
             if self.transforms:
-                if replay_params == None:
-                    augmented_samples, mask, replay_params = self.apply_augmentations(normalized_img, mask)
+                if replay_params is None:
+                    augmented_samples, augmented_masks, replay_params = self.apply_augmentations(normalized_img, mask)
                 else:
-                    # Replay augmentations for subsequent images
-                    augmented_samples, mask = self.replay_augmentations(normalized_img, mask, replay_params)
+                    augmented_samples, augmented_masks = self.replay_augmentations(normalized_img, mask, replay_params)
 
-                if self.dft_flag:
-                    data = dict()
-                    for i, augmented_img in enumerate(augmented_samples):
-                        #augmented_img = augmented_img.transpose(2, 0, 1)  # Change to (C, H, W) format
-                        a, p = [], []
-                        for channel in augmented_img:  # Iterate over channels
-                            amp, phase = c.compute_amplitude_phase(channel)
-                            a.append(amp)
-                            p.append(phase)
-                        # Stack amplitude and phase along the channel dimension
-                        augmented_amplitude = self.normalize(np.stack(a, axis=0), c.amp_mean, c.amp_std)
-                        augmented_phase = self.normalize(np.stack(p, axis=0), c.phase_mean, c.phase_std)
-                        # Combine amplitude and phase into a single array and change to C,H,W
-                        data["image"] = augmented_img.transpose(2, 0, 1)
-                        data["amplitude"] = augmented_amplitude.transpose(2, 0, 1)
-                        data["phase"] = augmented_phase.transpose(2, 0, 1)
-                        data["mask"] = mask[i]
-                    sample.append(data)
-                    continue
-                for i, j in enumerate(augmented_samples):
-                    sample.append({"image": j.transpose(2, 0, 1), "mask": mask[i]})
-                continue
-            if self.dft_flag:
-                data = dict()
+                for augmented_img, augmented_mask in zip(augmented_samples, augmented_masks):
+                    a, p = [], []
+                    for channel in augmented_img:
+                        amp, phase = c.compute_amplitude_phase(channel)
+                        a.append(amp)
+                        p.append(phase)
+
+                    augmented_amplitude = self.normalize(np.stack(a, axis=0), c.amp_mean, c.amp_std)
+                    augmented_phase = self.normalize(np.stack(p, axis=0), c.phase_mean, c.phase_std)
+
+                    sample = {
+                        "image": augmented_img.transpose(2, 0, 1),
+                        "amplitude": augmented_amplitude.transpose(2, 0, 1),
+                        "phase": augmented_phase.transpose(2, 0, 1),
+                        "mask": augmented_mask
+                    }
+                    samples.append(sample)
+            else:
                 a, p = [], []
-                for channel in normalized_img:  # Iterate over channels
+                for channel in normalized_img:
                     amp, phase = c.compute_amplitude_phase(channel)
                     a.append(amp)
                     p.append(phase)
-                # Stack amplitude and phase along the channel dimension
+
                 normalized_amplitude = self.normalize(np.stack(a, axis=0), c.amp_mean, c.amp_std)
                 normalized_phase = self.normalize(np.stack(p, axis=0), c.phase_mean, c.phase_std)
-                data["image"] = normalized_img.transpose(2, 0, 1)
-                data["amplitude"] = normalized_amplitude.transpose(2, 0, 1)
-                data["phase"] = normalized_phase.transpose(2, 0, 1)
-                data["mask"] = mask
-                sample.append(data)
-                continue
-            sample.append({"image": normalized_img.transpose(2, 0, 1), "mask": mask})
-            continue
-        return sample
+
+                sample = {
+                    "image": normalized_img.transpose(2, 0, 1),
+                    "amplitude": normalized_amplitude.transpose(2, 0, 1),
+                    "phase": normalized_phase.transpose(2, 0, 1),
+                    "mask": mask
+                }
+                samples.append(sample)
+        return samples
 
     def __len__(self):
         return len(self.mask_paths)
@@ -263,7 +256,7 @@ def get_paths(fraction=1, bands=["B3.tif", "B8.tif", "B12.tif"], seed=1337):
 
 
 def create_splits(train_percentage=0.7, val_percentage=0.15, test_percentage=0.15, seed=1337):
-    label_paths, img_paths = get_paths(fraction=1, seed=seed)#, bands=["SWIRP.png"])
+    label_paths, img_paths = get_paths(fraction=1, seed=seed, bands=["SWIRP.png"])
 
     img_paths_train = [row[: int(train_percentage * len(label_paths))] for row in img_paths]
     img_paths_val = [row[int(train_percentage * len(label_paths)): int((train_percentage + val_percentage) * len(label_paths))] for row in img_paths]
