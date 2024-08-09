@@ -24,8 +24,8 @@ if __name__ == "__main__":
     parser.add_argument('--naug', type=int, default=2)
     parser.add_argument('--dft', action="store_true")
 
-    train_percentage, val_percentage, test_percentage = 0.6, 0.2, 0.2
-    train_crop_size = 256
+    train_percentage, val_percentage, test_percentage = 0.5, 0.25, 0.25
+    train_crop_size = 64
     num_workers = 6
     pin_memory = True
     patience = 4
@@ -77,9 +77,10 @@ if __name__ == "__main__":
             A.VerticalFlip()
         ], additional_targets={'mask': 'image'})
 
-    train_dataset = S2Dataset(img_paths_train, label_paths_train, transforms=train_transforms, num_augmentations=num_augmentations, dft_flag=dft)
-    val_dataset = S2Dataset(img_paths_val, label_paths_val, transforms=None, num_augmentations=0, dft_flag=dft)
-    test_dataset = S2Dataset(img_paths_test, label_paths_test, transforms=None, num_augmentations=0, dft_flag=dft)
+    path = "C:/Users/The Son/Desktop/Uni/Berlin/Masterarbeit/Data/model_data/"
+    train_dataset = S2Dataset(img_paths_train, label_paths_train, data_path=path+"train", transforms=train_transforms, num_augmentations=num_augmentations, dft_flag=dft)
+    val_dataset = S2Dataset(img_paths_val, label_paths_val, data_path=path+"val", transforms=None, num_augmentations=0, dft_flag=dft)
+    test_dataset = S2Dataset(img_paths_test, label_paths_test, data_path=path+"test", transforms=None, num_augmentations=0, dft_flag=dft)
 
     # Create Dataloader
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, num_workers=num_workers, shuffle=True, pin_memory=pin_memory, collate_fn=collate)
@@ -91,13 +92,13 @@ if __name__ == "__main__":
     early_patience = patience * 3
     log_path = f"trained_models/{experiment_name}"
     os.makedirs(log_path, exist_ok=True)
-    model = UnetLarge(3, 2)
+    model = ResAttUnet(4, 8, 2)
 
     loss_func = XEDiceLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer,
-        mode="min",
+        mode="max",
         factor=0.2,
         patience=patience,
     )
@@ -118,11 +119,11 @@ if __name__ == "__main__":
         losses, batch_time, data_time = AverageMeter(), AverageMeter(), AverageMeter()
         end = time.time()
         for iter_num, (X, amps, phases, targets) in enumerate(train_loader):
-            #ap = torch.tensor(np.concatenate([amps, phases], axis=1)).cuda(non_blocking=True).float()
+            ap = torch.tensor(np.concatenate([amps, phases], axis=1)).cuda(non_blocking=True).float()
             X = X.cuda(non_blocking=True).float()
             targets = targets.cuda(non_blocking=True).long()
             optimizer.zero_grad()
-            preds = model(X)
+            preds = model(X, ap)
             
             
             # Move to GPU
@@ -147,12 +148,12 @@ if __name__ == "__main__":
         end = time.time()
 
         for iter_num, (X, amps, phases, targets) in enumerate(val_loader):
-            #ap = torch.tensor(np.concatenate([amps, phases], axis=1)).cuda(non_blocking=True).float()
+            ap = torch.tensor(np.concatenate([amps, phases], axis=1)).cuda(non_blocking=True).float()
             X = X.cuda(non_blocking=True).float()
             targets = targets.cuda(non_blocking=True).long()
 
             optimizer.zero_grad()
-            preds = model(X)
+            preds = model(X, ap)
 
             loss = loss_func(preds, targets)
             losses.update(loss.detach().item(), X.size(0))
@@ -170,6 +171,9 @@ if __name__ == "__main__":
             end = time.time()
 
         iou_global = tps / (tps + fps + fns)
+        #for name, param in model.state_dict().items():
+        #    if "spec_down_sample_05" in name:
+        #        print(f"Layer: {name} | Shape: {param.shape} | Weights: {param}")
         wandb.log({"iou_train": iou_global,
                    "loss_train": losses.avg})
         ## When validation IoU improved, save model. If not, increment the lr scheduler and early stopping counters
@@ -217,7 +221,7 @@ if __name__ == "__main__":
 
     # load best model
     model_weights_path = glob.glob(f"trained_models/{experiment_name}/best_iou*")[0]
-    model =  UnetLarge(3, 2)
+    model =  ResAttUnet(4, 8, 2)
     model = model.cuda()
     model.eval()
 
@@ -229,14 +233,14 @@ if __name__ == "__main__":
     probs = []
     torch.set_grad_enabled(False)
     for iter_num, (X, amps, phases, targets) in enumerate(test_loader):
-        #ap = torch.tensor(np.concatenate([amps, phases], axis=1)).cuda(non_blocking=True).float()
+        ap = torch.tensor(np.concatenate([amps, phases], axis=1)).cuda(non_blocking=True).float()
         X = X.cuda(non_blocking=True).float()
         targets = targets.cuda(non_blocking=True).long()
 
         optimizer.zero_grad()
-        preds = model(X)
+        preds = model(X, ap)
 
-        preds = torch.softmax(model(X), dim=1)[:, 1]
+        preds = torch.softmax(model(X, ap), dim=1)[:, 1]
         preds = (preds > 0.5) * 1
         
         tp, fp, fn, tn = tp_tn_fp_fn(preds, targets)

@@ -3,6 +3,8 @@ import tifffile
 import numpy as np
 import cv2
 import glob
+import os
+import time
 import albumentations as A
 
 
@@ -10,16 +12,15 @@ class Data():
     def __init__(
             self,
             data_paths,
+            mask_paths,
+            n_aug,
+            transforms=False
             ):
         self.data_paths = data_paths
-        self.name = self.data_paths[0].split("\\")[-1]
-        self.num_channels = self.get_num_channels()
-        self.mean, self.std, self.amp_mean, self.amp_std, self.phase_mean, self.phase_std = self.get_dataset_mean_std()
-
-
-    def get_num_channels(self):
-        return 1 if self.data_paths[0].endswith(".tif") else 3
-    
+        self.mask_paths = mask_paths
+        self.n_aug = n_aug
+        self.transforms = transforms
+  
 
     def get_dataset_mean_std(self):
         n_images = 0
@@ -27,14 +28,11 @@ class Data():
         amp_mean, amp_M2 = None, None
         phase_mean, phase_M2 = None, None
 
-        for path in self.data_paths:
-            if path.endswith(".tif"):
-                img = tifffile.imread(path)
-            elif path.endswith(".png"):
+        for path in self.data_paths:                
+            if isinstance(path, str):
                 img = cv2.imread(path) / 255.0
             else:
-                continue  # Skip unsupported file types
-
+                img = merge_tif(path)
             img = img.astype(np.float32)  # Ensure the image is in float32 format
 
             if img.ndim == 2:  # Single-channel image
@@ -94,48 +92,13 @@ class Data():
         return amplitude_spectrum, phase_spectrum
 
 
-
-
-class S2Dataset(torch.utils.data.Dataset):
-    def __init__(
-            self,
-            img_paths,
-            mask_paths,
-            transforms=None,
-            seed=1337,
-            num_augmentations=4,
-            dft_flag=True,
-    ):
-        self.img_paths = img_paths
-        self.mask_paths = mask_paths
-        self.transforms = transforms
-        self.dft_flag = dft_flag
-        self.seed = seed
-        self.num_augmentations = num_augmentations
-        self.dim = 0
-        self.data_classes = self.get_data_classes()
-
-
-    def get_data_classes(self):
-        "Creates a list of Classes containing information about the inputdata"
-        data_classes = []
-        for data_class in self.img_paths:
-            data_classes.append(Data(data_class))
-        for i in data_classes:
-            if self.dft_flag:
-                self.dim += (i.num_channels * 3)
-            else:
-                self.dim += i.num_channels
-        return data_classes
-    
-
     def apply_augmentations(self, img, mask):
         augmented_images = []
         augmented_masks = []
         replay_params = []
 
         # Apply augmentations num_augmentations times to the first image
-        for _ in range(self.num_augmentations):
+        for _ in range(self.n_aug):
             augmented = self.transforms(image=img, mask=mask)
             augmented_images.append(augmented['image'])
             augmented_masks.append(augmented['mask'])
@@ -143,6 +106,8 @@ class S2Dataset(torch.utils.data.Dataset):
         
         return augmented_images, augmented_masks, replay_params
     
+    def normalize(self, image, mean, std):        
+        return (image - mean) / std
 
     def replay_augmentations(self, img, mask, replay_params):
         augmented_images = []
@@ -153,65 +118,111 @@ class S2Dataset(torch.utils.data.Dataset):
             augmented_masks.append(augmented['mask'])
         return augmented_images, augmented_masks
 
-
-    def normalize(self, image, mean, std):
-        return (image - mean) / std
-
-
-    def __getitem__(self, idx):
-        replay_params = None
-        samples = []
-        mask = tifffile.imread(self.mask_paths[idx])
-        for c in self.data_classes:
-            img = None
-            if c.data_paths[idx].endswith(".tif"):
-                img = tifffile.imread(c.data_paths[idx])
-            elif c.data_paths[idx].endswith(".png"):
-                img = cv2.imread(c.data_paths[idx]) / 255.0
-            if img.ndim == 2:
-                img = np.expand_dims(img, axis=-1)
-            normalized_img = self.normalize(img, c.mean, c.std)
-            if self.transforms:
-                if replay_params is None:
-                    augmented_samples, augmented_masks, replay_params = self.apply_augmentations(normalized_img, mask)
+    def save_precomputed_data(self, output_dir):
+        start_time = time.time()
+        
+        if not os.path.exists(output_dir):
+            print("Creating data")        
+            os.makedirs(output_dir, exist_ok=True)
+            mean, std, amp_mean, amp_std, phase_mean, phase_std = self.get_dataset_mean_std()
+            
+            for i, path in enumerate(self.data_paths):
+                samples = []
+                if isinstance(path, str):
+                    img = cv2.imread(path) / 255.0
                 else:
-                    augmented_samples, augmented_masks = self.replay_augmentations(normalized_img, mask, replay_params)
+                    img = merge_tif(path)
+                img = img.astype(np.float32)  # Ensure the image is in float32 format
+                
+                if img.ndim == 2:  # Single-channel image
+                    img = np.expand_dims(img, axis=-1)
 
-                for augmented_img, augmented_mask in zip(augmented_samples, augmented_masks):
+                mask = tifffile.imread(self.mask_paths[i])    
+                normalized_img = self.normalize(img, mean, std)
+                replay_params = None
+                if self.transforms:
+                    if replay_params is None:
+                        augmented_samples, augmented_masks, replay_params = self.apply_augmentations(normalized_img, mask)
+                    else:
+                        augmented_samples, augmented_masks = self.replay_augmentations(normalized_img, mask, replay_params)
+
+                    for augmented_img, augmented_mask in zip(augmented_samples, augmented_masks):
+                        a, p = [], []
+                        for channel in augmented_img:
+                            amp, phase = self.compute_amplitude_phase(channel)
+                            a.append(amp)
+                            p.append(phase)
+
+                        augmented_amplitude = self.normalize(np.stack(a, axis=0), amp_mean, amp_std)
+                        augmented_phase = self.normalize(np.stack(p, axis=0), phase_mean, phase_std)
+
+                        sample = {
+                            "image": augmented_img.transpose(2, 0, 1),
+                            "amplitude": augmented_amplitude.transpose(2, 0, 1),
+                            "phase": augmented_phase.transpose(2, 0, 1),
+                            "mask": augmented_mask
+                        }
+                        samples.append(sample)
+                else:
                     a, p = [], []
-                    for channel in augmented_img:
-                        amp, phase = c.compute_amplitude_phase(channel)
+                    for channel in img:
+                        amp, phase = self.compute_amplitude_phase(channel)
                         a.append(amp)
                         p.append(phase)
 
-                    augmented_amplitude = self.normalize(np.stack(a, axis=0), c.amp_mean, c.amp_std)
-                    augmented_phase = self.normalize(np.stack(p, axis=0), c.phase_mean, c.phase_std)
+                    normalized_amplitude = self.normalize(np.stack(a, axis=0), amp_mean, amp_std)
+                    normalized_phase = self.normalize(np.stack(p, axis=0), phase_mean, phase_std)
 
                     sample = {
-                        "image": augmented_img.transpose(2, 0, 1),
-                        "amplitude": augmented_amplitude.transpose(2, 0, 1),
-                        "phase": augmented_phase.transpose(2, 0, 1),
-                        "mask": augmented_mask
+                        "image": normalized_img.transpose(2, 0, 1),
+                        "amplitude": normalized_amplitude.transpose(2, 0, 1),
+                        "phase": normalized_phase.transpose(2, 0, 1),
+                        "mask": mask
                     }
                     samples.append(sample)
-            else:
-                a, p = [], []
-                for channel in normalized_img:
-                    amp, phase = c.compute_amplitude_phase(channel)
-                    a.append(amp)
-                    p.append(phase)
+                output_path = f"{output_dir}/{i}.npz"
+                np.savez(output_path, samples)
+            print(f"Finished creating data {time.time() - start_time}")
 
-                normalized_amplitude = self.normalize(np.stack(a, axis=0), c.amp_mean, c.amp_std)
-                normalized_phase = self.normalize(np.stack(p, axis=0), c.phase_mean, c.phase_std)
 
-                sample = {
-                    "image": normalized_img.transpose(2, 0, 1),
-                    "amplitude": normalized_amplitude.transpose(2, 0, 1),
-                    "phase": normalized_phase.transpose(2, 0, 1),
-                    "mask": mask
-                }
-                samples.append(sample)
-        return samples
+
+class S2Dataset(torch.utils.data.Dataset):
+    def __init__(
+            self,
+            img_paths,
+            mask_paths,
+            data_path,
+            transforms=None,
+            seed=1337,
+            num_augmentations=4,
+            dft_flag=True,
+            
+    ):
+        self.img_paths = img_paths
+        self.mask_paths = mask_paths
+        self.transforms = transforms
+        self.dft_flag = dft_flag
+        self.seed = seed
+        self.data_path = data_path
+        self.num_augmentations = num_augmentations
+        self.data_classes = self.get_data_classes()
+
+
+    def get_data_classes(self):
+        "Creates a list of Classes containing information about the inputdata"
+        data_classes = []
+        for data in self.img_paths:
+            data_class = Data(data, self.mask_paths, transforms=self.transforms, n_aug=self.num_augmentations)
+            data_class.save_precomputed_data(self.data_path)
+            data_classes.append(data_class)        
+        return data_classes
+
+
+    def __getitem__(self, idx):
+        # Load precomputed data for the specific index
+        data = np.load(f"{self.data_path}/{idx}.npz", allow_pickle=True)
+        return data["arr_0"]
+
 
     def __len__(self):
         return len(self.mask_paths)
@@ -225,8 +236,14 @@ def mask_to_img(label, color_dict):
     return mutually_exclusive
 
 
+def merge_tif(paths):
+    img = []
+    for tif in paths:
+        img.append(tifffile.imread(tif))
+    return np.stack(img, axis=-1)
 
-def get_paths(fraction=1, bands=["B3.tif", "B8.tif", "B12.tif"], seed=1337):
+
+def get_paths(fraction=1, bands=["B3.tif", "B8.tif", "B11.tif", "B12.tif"], seed=1337):
     """
     Returns:
         label_paths: list of all labelpaths
@@ -248,15 +265,29 @@ def get_paths(fraction=1, bands=["B3.tif", "B8.tif", "B12.tif"], seed=1337):
 
     bands_paths = []
     for band in bands:
+        if ".tif" in band:
+            continue
         band_path_list = []
         for path in label_paths:
             band_path_list.append(path.replace("LabelWater.tif", f"{band}"))
         bands_paths.append(band_path_list)
+
+    tif = []
+    for path in label_paths:
+        p = []
+        for band in bands:
+            if band.endswith(".png"):
+                continue
+            p.append(path.replace("LabelWater.tif", f"{band}"))
+        tif.append(p)
+    if len(tif) != 1:
+        bands_paths.append(tif)
     return label_paths, bands_paths
 
 
-def create_splits(train_percentage=0.7, val_percentage=0.15, test_percentage=0.15, seed=1337):
-    label_paths, img_paths = get_paths(fraction=1, seed=seed, bands=["SWIRP.png"])
+def create_splits(train_percentage=0.5, val_percentage=0.25, test_percentage=0.25, seed=1337):
+    label_paths, img_paths = get_paths(fraction=1, seed=seed) #, bands=["SWIRP.png"])
+    #print(len(label_paths), len(img_paths))
 
     img_paths_train = [row[: int(train_percentage * len(label_paths))] for row in img_paths]
     img_paths_val = [row[int(train_percentage * len(label_paths)): int((train_percentage + val_percentage) * len(label_paths))] for row in img_paths]

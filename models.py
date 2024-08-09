@@ -1,5 +1,6 @@
 from torch import nn,cat,sigmoid
-    
+import numpy as np
+
 class Unet(nn.Module):
     def __init__(self,in_channels,out_channels):
         super().__init__()
@@ -322,7 +323,6 @@ class ResAttUnet(nn.Module):
         spec_enc_conv_3 = self.spec_enc_conv_03(self.spec_down_sample_02(spec_enc_conv_2))
         spec_enc_conv_4 = self.spec_enc_conv_04(self.spec_down_sample_03(spec_enc_conv_3))
         spec_enc_conv_5 = self.spec_enc_conv_05(self.spec_down_sample_04(spec_enc_conv_4))
-
         # Combine feature maps from both encoders
         combined_enc_conv_5 = cat((img_enc_conv_5, spec_enc_conv_5), dim=1)
         base_block = self.base(self.img_down_sample_05(combined_enc_conv_5))
@@ -349,7 +349,7 @@ class ResAttUnet(nn.Module):
         dec_conv_1 = cat((img_enc_conv_1, spec_enc_conv_1, dec_conv_1), dim=1)
         dec_conv_1 = self.dec_conv_01(dec_conv_1)
 
-        return sigmoid(self.final_conv(dec_conv_1))
+        return sigmoid(self.final_conv(dec_conv_1)), spec_enc_conv_5, img_enc_conv_5, dec_conv_2
 
     @staticmethod
     def residual_block(in_channels, out_channels):
