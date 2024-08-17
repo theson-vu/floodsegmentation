@@ -23,6 +23,8 @@ if __name__ == "__main__":
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--naug', type=int, default=2)
     parser.add_argument('--dft', action="store_true")
+    parser.add_argument('--wavelet', type=str, default="haar")
+    parser.add_argument('--deepfeature', action="store_true")
 
     train_percentage, val_percentage, test_percentage = 0.5, 0.25, 0.25
     train_crop_size = 64
@@ -38,15 +40,19 @@ if __name__ == "__main__":
     lr = args.lr
     seed = args.seed
     dft = args.dft
+    wavelet = args.wavelet
+    deep = args.deepfeature
 
     wandb.login()
     wandb.init(project="Master", name=experiment_name)
     wandb.log({
         "dft": dft,
+        "wavelet": wavelet,
         "batchsize": batch_size,
         "epochs": n_epochs,
         "learningrate": lr,
         "seed": seed,
+        "deep":deep,
         "cropsize": train_crop_size,
         "num_augmentations": num_augmentations,
         "num_workes": num_workers,
@@ -92,13 +98,13 @@ if __name__ == "__main__":
     early_patience = patience * 3
     log_path = f"trained_models/{experiment_name}"
     os.makedirs(log_path, exist_ok=True)
-    model = ResAttUnet(4, 8, 2)
+    model = MultiResAttUnet(4, 8, 2, wavelet, dft, deep)
 
     loss_func = XEDiceLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer,
-        mode="max",
+        mode="min",
         factor=0.2,
         patience=patience,
     )
@@ -221,7 +227,7 @@ if __name__ == "__main__":
 
     # load best model
     model_weights_path = glob.glob(f"trained_models/{experiment_name}/best_iou*")[0]
-    model =  ResAttUnet(4, 8, 2)
+    model =  MultiResAttUnet(4, 8, 2, wavelet, dft, deep)
     model = model.cuda()
     model.eval()
 
