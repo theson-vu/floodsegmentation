@@ -243,7 +243,7 @@ def merge_tif(paths):
     return np.stack(img, axis=-1)
 
 
-def get_paths(fraction=1, bands=["B3.tif", "B8.tif", "B11.tif", "B12.tif"], seed=1337):
+def get_paths(fraction=1, bands=["B2.tif", "B3.tif", "B4.tif",  "B8.tif", "B10.tif", "B12.tif"], seed=1337):
     """
     Returns:
         label_paths: list of all labelpaths

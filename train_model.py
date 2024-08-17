@@ -26,11 +26,11 @@ if __name__ == "__main__":
     parser.add_argument('--wavelet', type=str, default="haar")
     parser.add_argument('--deepfeature', action="store_true")
 
-    train_percentage, val_percentage, test_percentage = 0.5, 0.25, 0.25
+    train_percentage, val_percentage, test_percentage = 0.8, 0.1, 0.1
     train_crop_size = 64
     num_workers = 6
     pin_memory = True
-    patience = 4
+    patience = 8
 
     args = parser.parse_args()
     experiment_name = args.name
