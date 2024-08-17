@@ -285,7 +285,7 @@ def get_paths(fraction=1, bands=["B3.tif", "B8.tif", "B11.tif", "B12.tif"], seed
     return label_paths, bands_paths
 
 
-def create_splits(train_percentage=0.5, val_percentage=0.25, test_percentage=0.25, seed=1337):
+def create_splits(train_percentage=0.6, val_percentage=0.2, test_percentage=0.2, seed=1337):
     label_paths, img_paths = get_paths(fraction=1, seed=seed) #, bands=["SWIRP.png"])
     #print(len(label_paths), len(img_paths))
 

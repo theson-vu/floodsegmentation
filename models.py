@@ -363,8 +363,9 @@ class ResAttUnet(nn.Module):
 
 
 class MultiResAttUnet(nn.Module):
-    def __init__(self, img_channels, spec_channels, out_channels, wavelet, dft, deep):
+    def __init__(self, img_channels, spec_channels, out_channels, wavelet, dft, deep, debug=False):
         super(MultiResAttUnet, self).__init__()
+        self.debug = debug
         self.dft = dft
         self.wavelet = wavelet
         self.deep = deep
@@ -526,7 +527,20 @@ class MultiResAttUnet(nn.Module):
             dec_conv_1 = cat((img_enc_conv_1, dec_conv_5), dim=1)
         dec_conv_1 = self.dec_conv_01(dec_conv_1)
 
-        return sigmoid(self.final_conv(dec_conv_1))  #, spec_enc_conv_5, img_enc_conv_5, dec_conv_2
+        if self.debug:
+            results = {}
+            results["image_encoding"] = [img_enc_conv_1, img_enc_conv_2, img_enc_conv_3, img_enc_conv_4, img_enc_conv_5]
+            results["decoding"] = [dec_conv_5, dec_conv_4, dec_conv_3, dec_conv_2, dec_conv_1]
+            results["results"] = [sigmoid(self.final_conv(dec_conv_1))]
+            results["base"] = [base_block]
+            if self.dft:
+                results["spectral_encoding"] = [spec_enc_conv_1, spec_enc_conv_2, spec_enc_conv_3, spec_enc_conv_4, spec_enc_conv_5]
+            if self.deep:
+                results["deep_features"] = [resnet_features]
+            if self.wavelet:
+                results["wavelets"] = [LL_01, LL_02, LL_03, LL_04]
+            return results
+        return sigmoid(self.final_conv(dec_conv_1))  
 
     @staticmethod
     def residual_block(in_channels, out_channels):
