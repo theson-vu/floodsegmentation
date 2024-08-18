@@ -524,7 +524,7 @@ class MultiResAttUnet(nn.Module):
         if self.dft:
             dec_conv_1 = cat((img_enc_conv_1, spec_enc_conv_1, dec_conv_1), dim=1)
         else:
-            dec_conv_1 = cat((img_enc_conv_1, dec_conv_5), dim=1)
+            dec_conv_1 = cat((img_enc_conv_1, dec_conv_1), dim=1)
         dec_conv_1 = self.dec_conv_01(dec_conv_1)
 
         if self.debug:

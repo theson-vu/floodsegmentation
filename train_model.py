@@ -30,7 +30,7 @@ if __name__ == "__main__":
     train_crop_size = 64
     num_workers = 6
     pin_memory = True
-    patience = 8
+    patience = 5
 
     args = parser.parse_args()
     experiment_name = args.name
@@ -98,13 +98,13 @@ if __name__ == "__main__":
     early_patience = patience * 3
     log_path = f"trained_models/{experiment_name}"
     os.makedirs(log_path, exist_ok=True)
-    model = MultiResAttUnet(4, 8, 2, wavelet, dft, deep)
+    model = MultiResAttUnet(6, 12, 2, wavelet, dft, deep)
 
     loss_func = XEDiceLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer,
-        mode="min",
+        mode="max",
         factor=0.2,
         patience=patience,
     )
@@ -215,10 +215,10 @@ if __name__ == "__main__":
             # reset ES counters
             best_val_early_stopping_metric, early_stop_counter = early_stopping_metric, 0
 
-        # ES: Stop when stop counter reaches ES patience
+        """# ES: Stop when stop counter reaches ES patience
         if early_stop_counter > early_patience:
             print("Early Stopping")
-            break
+            break"""
         torch.cuda.empty_cache()
     torch.cuda.empty_cache()
     
@@ -227,7 +227,7 @@ if __name__ == "__main__":
 
     # load best model
     model_weights_path = glob.glob(f"trained_models/{experiment_name}/best_iou*")[0]
-    model =  MultiResAttUnet(4, 8, 2, wavelet, dft, deep)
+    model =  MultiResAttUnet(6, 12, 2, wavelet, dft, deep)
     model = model.cuda()
     model.eval()
 
