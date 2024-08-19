@@ -363,7 +363,7 @@ class ResAttUnet(nn.Module):
 
 
 class MultiResAttUnet(nn.Module):
-    def __init__(self, img_channels, spec_channels, out_channels, wavelet, dft, deep, debug=False):
+    def __init__(self, img_channels, spec_channels, out_channels, wavelet, dft, deep, image=True, debug=False):
         super(MultiResAttUnet, self).__init__()
         self.debug = debug
         self.dft = dft
@@ -373,7 +373,27 @@ class MultiResAttUnet(nn.Module):
             self.wavelet_channels = img_channels
         else:
             self.wavelet_channels = 0
-        
+
+        # ResNet50 feature extraction
+        if self.deep:
+            resnet = models.resnet152(weights="ResNet152_Weights.DEFAULT")
+            self.base_layers = list(resnet.children())[:-2]  # Remove avgpool and fc layers
+            self.base_layers[0] = nn.Conv2d(img_channels, self.base_layers[0].out_channels,
+                                            kernel_size=self.base_layers[0].kernel_size,
+                                            stride=1,
+                                            padding=self.base_layers[0].padding,
+                                            bias=self.base_layers[0].bias)
+            self.deep_enc_1 = nn.Sequential(*self.base_layers[:3])
+            self.deep_down_sample_5 = nn.Conv2d(2048, 512, kernel_size=1, stride=1, padding=0)
+            self.deep_enc_2 = nn.Sequential(*self.base_layers[3:5])
+            self.deep_down_sample_4 = nn.Conv2d(1024, 256, kernel_size=1, stride=1, padding=0)
+            self.deep_enc_3 = nn.Sequential(*self.base_layers[5])
+            self.deep_down_sample_3 = nn.Conv2d(512, 128, kernel_size=1, stride=1, padding=0)
+            self.deep_enc_4 = nn.Sequential(*self.base_layers[6])
+            self.deep_down_sample_2 = nn.Conv2d(256, 64, kernel_size=1, stride=1, padding=0)
+            self.deep_enc_5 = nn.Sequential(*self.base_layers[7])
+            self.deep_down_sample_1 = nn.Conv2d(64, 32, kernel_size=1, stride=1, padding=0)
+
         # Encoder for the original image
         self.img_enc_conv_01 = MultiResAttUnet.residual_block(img_channels, 32)
         self.img_down_sample_01 = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
@@ -386,16 +406,7 @@ class MultiResAttUnet(nn.Module):
         self.img_enc_conv_05 = MultiResAttUnet.residual_block(256 + self.wavelet_channels, 512)
         self.img_down_sample_05 = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
 
-        # ResNet50 feature extraction
-        if self.deep:
-            resnet = models.resnet50(weights="ResNet50_Weights.DEFAULT")
-            self.base_layers = list(resnet.children())[:-2]  # Remove avgpool and fc layers
-            self.base_layers[0] = nn.Conv2d(img_channels, self.base_layers[0].out_channels,
-                                            kernel_size=self.base_layers[0].kernel_size,
-                                            stride=self.base_layers[0].stride,
-                                            padding=self.base_layers[0].padding,
-                                            bias=self.base_layers[0].bias)
-            self.resnet_enc = nn.Sequential(*self.base_layers)
+        
 
         if self.dft:
         # Encoder for the amplitude and phase spectra
@@ -415,23 +426,23 @@ class MultiResAttUnet(nn.Module):
 
         # Decoder
         self.up_sample_05 = nn.ConvTranspose2d(in_channels=1024, out_channels=512, kernel_size=2, stride=2, padding=0)
-        self.dec_conv_05 = MultiResAttUnet.residual_block(1024 + (self.dft * 512), 512)  # 512 from img + 512 from spec + 512 from upsample
+        self.dec_conv_05 = MultiResAttUnet.residual_block(1024 + (self.dft * 512) + (self.deep * 512), 512)  # 512 from img + 512 from spec + 512 from upsample
         self.att_05 = AttentionBlock(F_g=512, F_l=512, F_int=256)
         
         self.up_sample_04 = nn.ConvTranspose2d(in_channels=512, out_channels=256, kernel_size=2, stride=2, padding=0)
-        self.dec_conv_04 = MultiResAttUnet.residual_block(512 + (self.dft * 256), 256)  # 256 from img + 256 from spec + 256 from upsample
+        self.dec_conv_04 = MultiResAttUnet.residual_block(512 + (self.dft * 256) + (self.deep * 256), 256)  # 256 from img + 256 from spec + 256 from upsample
         self.att_04 = AttentionBlock(F_g=256, F_l=256, F_int=128)
         
         self.up_sample_03 = nn.ConvTranspose2d(in_channels=256, out_channels=128, kernel_size=2, stride=2, padding=0)
-        self.dec_conv_03 = MultiResAttUnet.residual_block(256 + (self.dft * 128), 128)  # 128 from img + 128 from spec + 128 from upsample
+        self.dec_conv_03 = MultiResAttUnet.residual_block(256 + (self.dft * 128) + (self.deep * 128), 128)  # 128 from img + 128 from spec + 128 from upsample
         self.att_03 = AttentionBlock(F_g=128, F_l=128, F_int=64)
         
         self.up_sample_02 = nn.ConvTranspose2d(in_channels=128, out_channels=64, kernel_size=2, stride=2, padding=0)
-        self.dec_conv_02 = MultiResAttUnet.residual_block(128 + (self.dft * 64), 64)  # 64 from img + 64 from spec + 64 from upsample
+        self.dec_conv_02 = MultiResAttUnet.residual_block(128 + (self.dft * 64) + (self.deep * 64), 64)  # 64 from img + 64 from spec + 64 from upsample
         self.att_02 = AttentionBlock(F_g=64, F_l=64, F_int=32)
         
         self.up_sample_01 = nn.ConvTranspose2d(in_channels=64, out_channels=32, kernel_size=2, stride=2, padding=0)
-        self.dec_conv_01 = MultiResAttUnet.residual_block(64 + (self.dft * 32), 32)  # 32 from img + 32 from spec + 32 from upsample
+        self.dec_conv_01 = MultiResAttUnet.residual_block(64 + (self.dft * 32) + (self.deep * 32), 32)  # 32 from img + 32 from spec + 32 from upsample
         self.att_01 = AttentionBlock(F_g=32, F_l=32, F_int=16)
 
         self.final_conv = nn.Conv2d(in_channels=32, out_channels=out_channels, kernel_size=1, stride=1, padding=0)
@@ -483,49 +494,78 @@ class MultiResAttUnet(nn.Module):
             spec_enc_conv_4 = self.spec_enc_conv_04(self.spec_down_sample_03(spec_enc_conv_3))
             spec_enc_conv_5 = self.spec_enc_conv_05(self.spec_down_sample_04(spec_enc_conv_4))
             combined_enc_conv_5 = torch.cat((combined_enc_conv_5, spec_enc_conv_5), dim=1)
-        
+
         if self.deep:
+            # TODO make dimensions fit with the other ones
+            deep_enc_1 = self.deep_enc_1(x_img)  # Conv1 
+            deep_down_sample_1 = self.deep_down_sample_1(deep_enc_1)   
+
+            deep_enc_2 = self.deep_enc_2(deep_enc_1)  # Conv2
+            deep_down_sample_2 = self.deep_down_sample_2(deep_enc_2)
+
+            deep_enc_3 = self.deep_enc_3(deep_enc_2)  # Conv3
+            deep_down_sample_3 = self.deep_down_sample_3(deep_enc_3)
+
+            deep_enc_4 = self.deep_enc_4(deep_enc_3)  # Conv4
+            deep_down_sample_4 = self.deep_down_sample_4(deep_enc_4)
+
+            deep_enc_5 = self.deep_enc_5(deep_enc_4)  # Conv5
+            deep_down_sample_5 = self.deep_down_sample_5(deep_enc_5)
+
+            combined_enc_conv_5 = torch.cat((combined_enc_conv_5, deep_enc_5), dim=1)
+
+        """if self.deep:
             resnet_features = self.resnet_enc(x_img)
             resnet_features = nn.functional.interpolate(resnet_features, size=combined_enc_conv_5.shape[-2:], mode='bilinear', align_corners=True)
-            combined_enc_conv_5 = torch.cat((combined_enc_conv_5, resnet_features), dim=1)
+            combined_enc_conv_5 = torch.cat((combined_enc_conv_5, resnet_features), dim=1)"""
 
         base_block = self.base(self.img_down_sample_05(combined_enc_conv_5))
 
         # Decoder with attention blocks
+        # 1. deconvolutional layer
         dec_conv_5 = self.up_sample_05(base_block)
+        cat_5 = [dec_conv_5, self.att_05(dec_conv_5, img_enc_conv_5)]
         if self.dft:
-            dec_conv_5 = cat((self.att_05(dec_conv_5, img_enc_conv_5), self.att_05(dec_conv_5, spec_enc_conv_5), dec_conv_5), dim=1)
-        else:
-            dec_conv_5 = cat((self.att_05(dec_conv_5, img_enc_conv_5), dec_conv_5), dim=1)
-        dec_conv_5 = self.dec_conv_05(dec_conv_5)
+            cat_5.append(self.att_05(dec_conv_5, spec_enc_conv_5))
+        if self.deep:
+            cat_5.append(self.att_05(dec_conv_5, deep_down_sample_5))
+        dec_conv_5 = self.dec_conv_05(cat(tuple(cat_5), dim=1))
 
+        # 2. deconvolutional layer
         dec_conv_4 = self.up_sample_04(dec_conv_5)
+        cat_4 = [dec_conv_4, self.att_04(dec_conv_4, img_enc_conv_4)]
         if self.dft:
-            dec_conv_4 = cat((self.att_04(dec_conv_4, img_enc_conv_4), self.att_04(dec_conv_4, spec_enc_conv_4), dec_conv_4), dim=1)
-        else:
-            dec_conv_4 = cat((self.att_04(dec_conv_4, img_enc_conv_4), dec_conv_4), dim=1)
-        dec_conv_4 = self.dec_conv_04(dec_conv_4)
+            cat_4.append(self.att_04(dec_conv_4, spec_enc_conv_4))
+        if self.deep:
+            cat_4.append(self.att_04(dec_conv_4, deep_down_sample_4))
+        dec_conv_4 = self.dec_conv_04(cat(tuple(cat_4), dim=1))
 
+        # 3. deconvolutional layer
         dec_conv_3 = self.up_sample_03(dec_conv_4)
+        cat_3 = [dec_conv_3, self.att_03(dec_conv_3, img_enc_conv_3)]
         if self.dft:
-            dec_conv_3 = cat((self.att_03(dec_conv_3, img_enc_conv_3), self.att_03(dec_conv_3, spec_enc_conv_3), dec_conv_3), dim=1)
-        else:
-            dec_conv_3 = cat((self.att_03(dec_conv_3, img_enc_conv_3), dec_conv_3), dim=1)
-        dec_conv_3 = self.dec_conv_03(dec_conv_3)
+            cat_3.append(self.att_03(dec_conv_3, spec_enc_conv_3))
+        if self.deep:
+            cat_3.append(self.att_03(dec_conv_3, deep_down_sample_3))
+        dec_conv_3 = self.dec_conv_03(cat(tuple(cat_3), dim=1))
 
+        # 4. deconvolutional layer
         dec_conv_2 = self.up_sample_02(dec_conv_3)
+        cat_2 = [dec_conv_2, self.att_02(dec_conv_2, img_enc_conv_2)]
         if self.dft:
-            dec_conv_2 = cat((self.att_02(dec_conv_2, img_enc_conv_2), self.att_02(dec_conv_2, spec_enc_conv_2), dec_conv_2), dim=1)
-        else:
-            dec_conv_2 = cat((self.att_02(dec_conv_2, img_enc_conv_2), dec_conv_2), dim=1)
-        dec_conv_2 = self.dec_conv_02(dec_conv_2)
+            cat_2.append(self.att_02(dec_conv_2, spec_enc_conv_2))
+        if self.deep:
+            cat_2.append(self.att_02(dec_conv_2, deep_down_sample_2))
+        dec_conv_2 = self.dec_conv_02(cat(tuple(cat_2), dim=1))
 
+        # 5. deconvolutional layer
         dec_conv_1 = self.up_sample_01(dec_conv_2)
+        cat_1 = [dec_conv_1, img_enc_conv_1]
         if self.dft:
-            dec_conv_1 = cat((img_enc_conv_1, spec_enc_conv_1, dec_conv_1), dim=1)
-        else:
-            dec_conv_1 = cat((img_enc_conv_1, dec_conv_1), dim=1)
-        dec_conv_1 = self.dec_conv_01(dec_conv_1)
+            cat_1.append(spec_enc_conv_1)
+        if self.deep:
+            cat_1.append(deep_down_sample_1)
+        dec_conv_1 = self.dec_conv_01(cat(tuple(cat_1), dim=1))
 
         if self.debug:
             results = {}
@@ -536,7 +576,7 @@ class MultiResAttUnet(nn.Module):
             if self.dft:
                 results["spectral_encoding"] = [spec_enc_conv_1, spec_enc_conv_2, spec_enc_conv_3, spec_enc_conv_4, spec_enc_conv_5]
             if self.deep:
-                results["deep_features"] = [resnet_features]
+                results["deep_features"] = [deep_enc_1, deep_enc_2, deep_enc_3, deep_enc_4, deep_enc_5]
             if self.wavelet:
                 results["wavelets"] = [LL_01, LL_02, LL_03, LL_04]
             return results
