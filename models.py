@@ -376,13 +376,13 @@ class MultiResAttUnet(nn.Module):
 
         # ResNet50 feature extraction
         if self.deep:
-            resnet = models.resnet152(weights="ResNet152_Weights.DEFAULT")
+            resnet = models.resnet50(weights="ResNet50_Weights.DEFAULT")
             self.base_layers = list(resnet.children())[:-2]  # Remove avgpool and fc layers
-            self.base_layers[0] = nn.Conv2d(img_channels, self.base_layers[0].out_channels,
+            """self.base_layers[0] = nn.Conv2d(img_channels, self.base_layers[0].out_channels,
                                             kernel_size=self.base_layers[0].kernel_size,
                                             stride=1,
                                             padding=self.base_layers[0].padding,
-                                            bias=self.base_layers[0].bias)
+                                            bias=self.base_layers[0].bias)"""
             self.deep_enc_1 = nn.Sequential(*self.base_layers[:3])
             self.deep_down_sample_5 = nn.Conv2d(2048, 512, kernel_size=1, stride=1, padding=0)
             self.deep_enc_2 = nn.Sequential(*self.base_layers[3:5])
@@ -405,8 +405,6 @@ class MultiResAttUnet(nn.Module):
         self.img_down_sample_04 = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
         self.img_enc_conv_05 = MultiResAttUnet.residual_block(256 + self.wavelet_channels, 512)
         self.img_down_sample_05 = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
-
-        
 
         if self.dft:
         # Encoder for the amplitude and phase spectra
@@ -496,8 +494,8 @@ class MultiResAttUnet(nn.Module):
             combined_enc_conv_5 = torch.cat((combined_enc_conv_5, spec_enc_conv_5), dim=1)
 
         if self.deep:
-            # TODO make dimensions fit with the other ones
-            deep_enc_1 = self.deep_enc_1(x_img)  # Conv1 
+            deep_input = x_img[:, :3, :, :]  # Only use RGB channels
+            deep_enc_1 = self.deep_enc_1(deep_input)  # Conv1 
             deep_down_sample_1 = self.deep_down_sample_1(deep_enc_1)   
 
             deep_enc_2 = self.deep_enc_2(deep_enc_1)  # Conv2

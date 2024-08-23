@@ -27,8 +27,8 @@ if __name__ == "__main__":
     parser.add_argument('--deepfeature', action="store_true")
 
     train_percentage, val_percentage, test_percentage = 0.8, 0.1, 0.1
-    train_crop_size = 64
-    num_workers = 6
+    train_crop_size = 128
+    num_workers = 2
     pin_memory = True
     patience = 5
 
@@ -58,6 +58,7 @@ if __name__ == "__main__":
         "num_workes": num_workers,
         "split percentages": (train_percentage, val_percentage, test_percentage),
         })
+    
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -90,8 +91,8 @@ if __name__ == "__main__":
 
     # Create Dataloader
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, num_workers=num_workers, shuffle=True, pin_memory=pin_memory, collate_fn=collate)
-    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=pin_memory, collate_fn=collate)
-    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=pin_memory, collate_fn=collate)
+    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=pin_memory, collate_fn=collate)
+    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=pin_memory, collate_fn=collate)
  
     on_gpu = torch.cuda.is_available()
 
@@ -244,7 +245,6 @@ if __name__ == "__main__":
         targets = targets.cuda(non_blocking=True).long()
 
         optimizer.zero_grad()
-        preds = model(X, ap)
 
         preds = torch.softmax(model(X, ap), dim=1)[:, 1]
         preds = (preds > 0.5) * 1

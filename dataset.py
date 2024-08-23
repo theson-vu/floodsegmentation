@@ -6,6 +6,7 @@ import glob
 import os
 import time
 import albumentations as A
+import matplotlib.pyplot as plt
 
 
 class Data():
@@ -148,35 +149,35 @@ class Data():
 
                     for augmented_img, augmented_mask in zip(augmented_samples, augmented_masks):
                         a, p = [], []
-                        for channel in augmented_img:
+                        for n in range(augmented_img.shape[2]):
+                            channel = augmented_img[:, :, n]
                             amp, phase = self.compute_amplitude_phase(channel)
                             a.append(amp)
                             p.append(phase)
 
-                        augmented_amplitude = self.normalize(np.stack(a, axis=0), amp_mean, amp_std)
-                        augmented_phase = self.normalize(np.stack(p, axis=0), phase_mean, phase_std)
+                        augmented_amplitude = self.normalize(np.stack(a, axis=0), amp_mean.reshape(amp_mean.shape[0], 1, 1), amp_std.reshape(amp_mean.shape[0], 1, 1))
+                        augmented_phase = self.normalize(np.stack(p, axis=0), phase_mean.reshape(phase_mean.shape[0], 1, 1), phase_std.reshape(phase_std.shape[0], 1, 1))
 
                         sample = {
                             "image": augmented_img.transpose(2, 0, 1),
-                            "amplitude": augmented_amplitude.transpose(2, 0, 1),
-                            "phase": augmented_phase.transpose(2, 0, 1),
+                            "amplitude": augmented_amplitude,
+                            "phase": augmented_phase,
                             "mask": augmented_mask
                         }
                         samples.append(sample)
                 else:
                     a, p = [], []
-                    for channel in img:
+                    for n in range(img.shape[2]):
+                        channel = img[:, :, n]
                         amp, phase = self.compute_amplitude_phase(channel)
                         a.append(amp)
                         p.append(phase)
-
-                    normalized_amplitude = self.normalize(np.stack(a, axis=0), amp_mean, amp_std)
-                    normalized_phase = self.normalize(np.stack(p, axis=0), phase_mean, phase_std)
-
+                    normalized_amplitude = self.normalize(np.stack(a, axis=0), amp_mean.reshape(amp_mean.shape[0], 1, 1), amp_std.reshape(amp_mean.shape[0], 1, 1))
+                    normalized_phase = self.normalize(np.stack(p, axis=0), phase_mean.reshape(phase_mean.shape[0], 1, 1), phase_std.reshape(phase_std.shape[0], 1, 1))
                     sample = {
                         "image": normalized_img.transpose(2, 0, 1),
-                        "amplitude": normalized_amplitude.transpose(2, 0, 1),
-                        "phase": normalized_phase.transpose(2, 0, 1),
+                        "amplitude": normalized_amplitude,
+                        "phase": normalized_phase,
                         "mask": mask
                     }
                     samples.append(sample)
