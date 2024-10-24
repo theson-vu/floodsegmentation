@@ -6,7 +6,7 @@ import glob
 import os
 import time
 import albumentations as A
-import matplotlib.pyplot as plt
+import pywt
 
 
 class Data():
@@ -15,12 +15,15 @@ class Data():
             data_paths,
             mask_paths,
             n_aug,
-            transforms=False
+            transforms=False,
+            wavelet="haar"
             ):
         self.data_paths = data_paths
         self.mask_paths = mask_paths
         self.n_aug = n_aug
+        self.wavelet = wavelet
         self.transforms = transforms
+        self.mean, self.std, self.amp_mean, self.amp_std, self.phase_mean, self.phase_std = self.get_dataset_mean_std()
   
 
     def get_dataset_mean_std(self):
@@ -119,13 +122,17 @@ class Data():
             augmented_masks.append(augmented['mask'])
         return augmented_images, augmented_masks
 
+    def wavelet_transform(self, x, wavelet):
+        coeffs2 = pywt.dwt2(x, wavelet)
+        LL, (LH, HL, HH) = coeffs2
+        return np.stack([LL, LH, HL, HH], axis=0)
+
     def save_precomputed_data(self, output_dir):
         start_time = time.time()
         
         if not os.path.exists(output_dir):
             print("Creating data")        
             os.makedirs(output_dir, exist_ok=True)
-            mean, std, amp_mean, amp_std, phase_mean, phase_std = self.get_dataset_mean_std()
             
             for i, path in enumerate(self.data_paths):
                 samples = []
@@ -139,7 +146,7 @@ class Data():
                     img = np.expand_dims(img, axis=-1)
 
                 mask = tifffile.imread(self.mask_paths[i])    
-                normalized_img = self.normalize(img, mean, std)
+                normalized_img = self.normalize(img, self.mean, self.std)
                 replay_params = None
                 if self.transforms:
                     if replay_params is None:
@@ -149,35 +156,50 @@ class Data():
 
                     for augmented_img, augmented_mask in zip(augmented_samples, augmented_masks):
                         a, p = [], []
+                        wavelets = []                      
                         for n in range(augmented_img.shape[2]):
                             channel = augmented_img[:, :, n]
+                            wavelet = self.wavelet_transform(channel, self.wavelet)
                             amp, phase = self.compute_amplitude_phase(channel)
                             a.append(amp)
                             p.append(phase)
+                            wavelets.append(wavelet)
 
-                        augmented_amplitude = self.normalize(np.stack(a, axis=0), amp_mean.reshape(amp_mean.shape[0], 1, 1), amp_std.reshape(amp_mean.shape[0], 1, 1))
-                        augmented_phase = self.normalize(np.stack(p, axis=0), phase_mean.reshape(phase_mean.shape[0], 1, 1), phase_std.reshape(phase_std.shape[0], 1, 1))
+                        augmented_amplitude = self.normalize(np.stack(a, axis=0), self.amp_mean.reshape(self.amp_mean.shape[0], 1, 1), self.amp_std.reshape(self.amp_mean.shape[0], 1, 1))
+                        augmented_phase = self.normalize(np.stack(p, axis=0), self.phase_mean.reshape(self.phase_mean.shape[0], 1, 1), self.phase_std.reshape(self.phase_std.shape[0], 1, 1))
+
+                        #augmented_mean = np.mean(augmented_img, axis=2)
+                        #augmented_wavelet = self.wavelet_transform(augmented_mean, self.wavelet)
+                        augmented_wavelet = np.concatenate(wavelets, axis=0)
 
                         sample = {
                             "image": augmented_img.transpose(2, 0, 1),
                             "amplitude": augmented_amplitude,
                             "phase": augmented_phase,
+                            "wavelet": augmented_wavelet,
                             "mask": augmented_mask
                         }
                         samples.append(sample)
                 else:
                     a, p = [], []
+                    wavelets = []
+                    #img_mean = np.mean(normalized_img, axis=2)
+                    #wavelets_ = self.wavelet_transform(img_mean, self.wavelet)
                     for n in range(img.shape[2]):
                         channel = img[:, :, n]
+                        wavelet = self.wavelet_transform(channel, self.wavelet)
                         amp, phase = self.compute_amplitude_phase(channel)
                         a.append(amp)
                         p.append(phase)
-                    normalized_amplitude = self.normalize(np.stack(a, axis=0), amp_mean.reshape(amp_mean.shape[0], 1, 1), amp_std.reshape(amp_mean.shape[0], 1, 1))
-                    normalized_phase = self.normalize(np.stack(p, axis=0), phase_mean.reshape(phase_mean.shape[0], 1, 1), phase_std.reshape(phase_std.shape[0], 1, 1))
+                        wavelets.append(wavelet)
+                    normalized_amplitude = self.normalize(np.stack(a, axis=0), self.amp_mean.reshape(self.amp_mean.shape[0], 1, 1), self.amp_std.reshape(self.amp_mean.shape[0], 1, 1))
+                    normalized_phase = self.normalize(np.stack(p, axis=0), self.phase_mean.reshape(self.phase_mean.shape[0], 1, 1), self.phase_std.reshape(self.phase_std.shape[0], 1, 1))
+                    wavelets_ = np.concatenate(wavelets, axis=0)
                     sample = {
                         "image": normalized_img.transpose(2, 0, 1),
                         "amplitude": normalized_amplitude,
                         "phase": normalized_phase,
+                        "wavelet": wavelets_,
                         "mask": mask
                     }
                     samples.append(sample)
@@ -197,7 +219,8 @@ class S2Dataset(torch.utils.data.Dataset):
             seed=1337,
             num_augmentations=4,
             dft_flag=True,
-            
+            wavelet="haar",
+            normalize=[]            
     ):
         self.img_paths = img_paths
         self.mask_paths = mask_paths
@@ -206,14 +229,27 @@ class S2Dataset(torch.utils.data.Dataset):
         self.seed = seed
         self.data_path = data_path
         self.num_augmentations = num_augmentations
-        self.data_classes = self.get_data_classes()
+        self.wavelet = wavelet
+        self.normalize = normalize
+        if self.normalize:
+            self.mean, self.std, self.amp_mean, self.amp_std, self.phase_mean, self.phase_std = normalize
+        else:
+            self.mean, self.std, self.amp_mean, self.amp_std, self.phase_mean, self.phase_std = None, None, None, None, None, None
+
+        if not os.path.exists(data_path):
+            self.data_classes = self.get_data_classes()
+        
 
 
     def get_data_classes(self):
         "Creates a list of Classes containing information about the inputdata"
         data_classes = []
         for data in self.img_paths:
-            data_class = Data(data, self.mask_paths, transforms=self.transforms, n_aug=self.num_augmentations)
+            data_class = Data(data, self.mask_paths, wavelet=self.wavelet, transforms=self.transforms, n_aug=self.num_augmentations)
+            if self.normalize:
+                data_class.mean, data_class.std, data_class.amp_mean, data_class.amp_std, data_class.phase_mean, data_class.phase_std = self.mean, self.std, self.amp_mean, self.amp_std, self.phase_mean, self.phase_std
+            else:
+                self.mean, self.std, self.amp_mean, self.amp_std, self.phase_mean, self.phase_std = data_class.mean, data_class.std, data_class.amp_mean, data_class.amp_std, data_class.phase_mean, data_class.phase_std
             data_class.save_precomputed_data(self.data_path)
             data_classes.append(data_class)        
         return data_classes

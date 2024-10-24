@@ -3,8 +3,9 @@ import argparse
 from dataset import create_splits, S2Dataset
 import numpy as np
 import torch
+import torch.autograd.profiler as profiler
 from utils import *
-from models import *
+from encoder import *
 import os
 import time
 import glob
@@ -12,6 +13,7 @@ import matplotlib.pyplot as plt
 import tifffile
 import random
 import wandb
+import segmentation_models_pytorch as smp
 
 
 if __name__ == "__main__":
@@ -23,14 +25,15 @@ if __name__ == "__main__":
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--naug', type=int, default=2)
     parser.add_argument('--dft', action="store_true")
-    parser.add_argument('--wavelet', type=str, default="haar")
-    parser.add_argument('--deepfeature', action="store_true")
+    parser.add_argument('--image', action="store_true")
+    parser.add_argument('--wavelet', type=str, default="")
+    parser.add_argument('--deep', action="store_true")
 
-    train_percentage, val_percentage, test_percentage = 0.8, 0.1, 0.1
+    train_percentage, val_percentage, test_percentage = 0.5, 0.25, 0.25
     train_crop_size = 128
     num_workers = 2
     pin_memory = True
-    patience = 5
+    patience = 3
 
     args = parser.parse_args()
     experiment_name = args.name
@@ -41,9 +44,10 @@ if __name__ == "__main__":
     seed = args.seed
     dft = args.dft
     wavelet = args.wavelet
-    deep = args.deepfeature
+    deep = args.deep
+    image = args.image
 
-    wandb.login()
+    #wandb.login()
     wandb.init(project="Master", name=experiment_name)
     wandb.log({
         "dft": dft,
@@ -51,6 +55,7 @@ if __name__ == "__main__":
         "batchsize": batch_size,
         "epochs": n_epochs,
         "learningrate": lr,
+        "image": image,
         "seed": seed,
         "deep":deep,
         "cropsize": train_crop_size,
@@ -85,9 +90,11 @@ if __name__ == "__main__":
         ], additional_targets={'mask': 'image'})
 
     path = "C:/Users/The Son/Desktop/Uni/Berlin/Masterarbeit/Data/model_data/"
-    train_dataset = S2Dataset(img_paths_train, label_paths_train, data_path=path+"train", transforms=train_transforms, num_augmentations=num_augmentations, dft_flag=dft)
-    val_dataset = S2Dataset(img_paths_val, label_paths_val, data_path=path+"val", transforms=None, num_augmentations=0, dft_flag=dft)
-    test_dataset = S2Dataset(img_paths_test, label_paths_test, data_path=path+"test", transforms=None, num_augmentations=0, dft_flag=dft)
+    train_dataset = S2Dataset(img_paths_train, label_paths_train, data_path=path+"train", wavelet=wavelet, transforms=train_transforms, num_augmentations=num_augmentations, dft_flag=dft)
+    norm = [train_dataset.mean, train_dataset.std, train_dataset.amp_mean, train_dataset.amp_std, train_dataset.phase_mean, train_dataset.phase_std]
+
+    val_dataset = S2Dataset(img_paths_val, label_paths_val, data_path=path+"val", wavelet=wavelet, transforms=None, num_augmentations=0, dft_flag=dft, normalize=norm)
+    test_dataset = S2Dataset(img_paths_test, label_paths_test, data_path=path+"test", wavelet=wavelet, transforms=None, num_augmentations=0, dft_flag=dft, normalize=norm)
 
     # Create Dataloader
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, num_workers=num_workers, shuffle=True, pin_memory=pin_memory, collate_fn=collate)
@@ -96,10 +103,64 @@ if __name__ == "__main__":
  
     on_gpu = torch.cuda.is_available()
 
-    early_patience = patience * 3
+    early_patience = patience * 5
     log_path = f"trained_models/{experiment_name}"
     os.makedirs(log_path, exist_ok=True)
-    model = MultiResAttUnet(6, 12, 2, wavelet, dft, deep)
+
+    # Select model
+    if image and deep:
+        print("Using dual_resnet_encoder")
+        model = smp.Unet(
+            encoder_name="dual_resnet_encoder",
+            encoder_depth=5,
+            encoder_weights=None,
+            classes=2,
+            decoder_attention_type="scse",
+            activation='sigmoid',
+        )
+    elif image and wavelet:
+        print("Using dual_encoder_wav")
+        model = smp.Unet(
+            encoder_name="dual_encoder_wav",
+            encoder_depth=5,
+            encoder_weights=None,
+            classes=2,
+            decoder_attention_type="scse",
+            activation='sigmoid',
+        )
+    elif image and dft:
+        print("Using dual_encoder_dft")
+        model = smp.Unet(
+            encoder_name="dual_encoder_dft",
+            encoder_depth=5,
+            encoder_weights=None,
+            classes=2,
+            decoder_attention_type="scse",
+            activation='sigmoid',
+        )
+    elif deep:
+        print("Using resnet50")
+        model = smp.Unet(
+            encoder_name="resnet50",
+            encoder_weights="imagenet",
+            classes=2,
+            decoder_attention_type="scse",
+            activation='sigmoid',
+        )
+    else:
+        n = 6
+        if dft:
+            n = 12
+        elif wavelet:
+            n = 24
+        print(f"Using single_encoder_{n}")
+        model = smp.Unet(
+            encoder_name=f"single_encoder_{n}",
+            encoder_weights=None,
+            classes=2,
+            decoder_attention_type="scse",
+            activation='sigmoid',
+        )
 
     loss_func = XEDiceLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
@@ -125,14 +186,34 @@ if __name__ == "__main__":
 
         losses, batch_time, data_time = AverageMeter(), AverageMeter(), AverageMeter()
         end = time.time()
-        for iter_num, (X, amps, phases, targets) in enumerate(train_loader):
-            ap = torch.tensor(np.concatenate([amps, phases], axis=1)).cuda(non_blocking=True).float()
-            X = X.cuda(non_blocking=True).float()
+        for iter_num, (X, amps, phases, all_wavelets, targets) in enumerate(train_loader):
+            all_wavelets = all_wavelets.cuda(non_blocking=True).float()
+            ap = np.concatenate([amps, phases], axis=1)
+            X = X.cuda(non_blocking=True).float()  # Ensure X is moved to GPU as well
             targets = targets.cuda(non_blocking=True).long()
             optimizer.zero_grad()
-            preds = model(X, ap)
-            
-            
+
+            # Compose model input according to arguments
+            if image and deep:
+                model_input = X
+            elif image and dft:
+                model_input = np.concatenate([X.cpu().numpy(), ap], axis=1)  # Concatenate on CPU first
+                model_input = torch.tensor(model_input).cuda(non_blocking=True).float()
+            elif image and wavelet:
+                model_input = X
+                model.encoder.wav = all_wavelets
+            elif deep:
+                model_input = X[:, :3, :, :]  # Only RGB channels
+            elif image:
+                model_input = X
+            elif dft:
+                model_input = torch.tensor(ap).cuda(non_blocking=True).float()  # Convert ap to tensor and move to GPU
+            elif wavelet:
+                model_input = all_wavelets
+    
+            # Ensure model_input is a torch tensor without re-wrapping
+            preds = model(model_input)
+
             # Move to GPU
             loss = loss_func(preds, targets)
             loss.backward()
@@ -154,13 +235,33 @@ if __name__ == "__main__":
         tps, fps, fns = 0, 0, 0
         end = time.time()
 
-        for iter_num, (X, amps, phases, targets) in enumerate(val_loader):
-            ap = torch.tensor(np.concatenate([amps, phases], axis=1)).cuda(non_blocking=True).float()
-            X = X.cuda(non_blocking=True).float()
+        for iter_num, (X, amps, phases, all_wavelets, targets) in enumerate(val_loader):
+            all_wavelets = all_wavelets.cuda(non_blocking=True).float()
+            ap = np.concatenate([amps, phases], axis=1)
+            X = X.cuda(non_blocking=True).float()  # Ensure X is moved to GPU as well
             targets = targets.cuda(non_blocking=True).long()
-
             optimizer.zero_grad()
-            preds = model(X, ap)
+
+            # Compose model input according to arguments
+            if image and deep:
+                model_input = X
+            elif image and dft:
+                model_input = np.concatenate([X.cpu().numpy(), ap], axis=1)  # Concatenate on CPU first
+                model_input = torch.tensor(model_input).cuda(non_blocking=True).float()
+            elif image and wavelet:
+                model_input = X
+                model.encoder.wav = all_wavelets
+            elif deep:
+                model_input = X[:, :3, :, :]  # Only RGB channels
+            elif image:
+                model_input = X
+            elif dft:
+                model_input = torch.tensor(ap).cuda(non_blocking=True).float()  # Convert ap to tensor and move to GPU
+            elif wavelet:
+                model_input = all_wavelets
+            
+            optimizer.zero_grad()
+            preds = model(model_input)
 
             loss = loss_func(preds, targets)
             losses.update(loss.detach().item(), X.size(0))
@@ -178,11 +279,9 @@ if __name__ == "__main__":
             end = time.time()
 
         iou_global = tps / (tps + fps + fns)
-        #for name, param in model.state_dict().items():
-        #    if "spec_down_sample_05" in name:
-        #        print(f"Layer: {name} | Shape: {param.shape} | Weights: {param}")
+        
         wandb.log({"iou_train": iou_global,
-                   "loss_train": losses.avg})
+                "loss_train": losses.avg})
         ## When validation IoU improved, save model. If not, increment the lr scheduler and early stopping counters
         early_stopping_metric = iou_global
         if curr_epoch_num > 6:
@@ -216,19 +315,69 @@ if __name__ == "__main__":
             # reset ES counters
             best_val_early_stopping_metric, early_stop_counter = early_stopping_metric, 0
 
-        """# ES: Stop when stop counter reaches ES patience
+        # ES: Stop when stop counter reaches ES patience
         if early_stop_counter > early_patience:
             print("Early Stopping")
-            break"""
+            break
         torch.cuda.empty_cache()
     torch.cuda.empty_cache()
+
     
 
     print(f"Best validation IoU of {best_metric:.5f} in epoch {best_metric_epoch}.")
 
     # load best model
     model_weights_path = glob.glob(f"trained_models/{experiment_name}/best_iou*")[0]
-    model =  MultiResAttUnet(6, 12, 2, wavelet, dft, deep)
+
+    # Select model
+    if image and deep:
+        model = smp.Unet(
+            encoder_name="dual_resnet_encoder",
+            encoder_depth=5,
+            encoder_weights=None,
+            classes=2,
+            decoder_attention_type="scse",
+            activation='sigmoid',
+        )
+    elif image and wavelet:
+        model = smp.Unet(
+            encoder_name="dual_encoder_wav",
+            encoder_depth=5,
+            encoder_weights=None,
+            classes=2,
+            decoder_attention_type="scse",
+            activation='sigmoid',
+        )
+    elif image and dft:
+        model = smp.Unet(
+            encoder_name="dual_encoder_dft",
+            encoder_depth=5,
+            encoder_weights=None,
+            classes=2,
+            decoder_attention_type="scse",
+            activation='sigmoid',
+        )
+    elif deep:
+        model = smp.Unet(
+            encoder_name="resnet50",
+            classes=2,
+            decoder_attention_type="scse",
+            activation='sigmoid',
+        )
+    else:
+        n = 6
+        if dft:
+            n = 12
+        elif wavelet:
+            n = 24
+        model = smp.Unet(
+            encoder_name=f"single_encoder_{n}",
+            encoder_weights=None,
+            classes=2,
+            decoder_attention_type="scse",
+            activation='sigmoid',
+        )
+
     model = model.cuda()
     model.eval()
 
@@ -239,14 +388,33 @@ if __name__ == "__main__":
     tps, fps, fns, tns = 0, 0, 0,0
     probs = []
     torch.set_grad_enabled(False)
-    for iter_num, (X, amps, phases, targets) in enumerate(test_loader):
-        ap = torch.tensor(np.concatenate([amps, phases], axis=1)).cuda(non_blocking=True).float()
-        X = X.cuda(non_blocking=True).float()
+    for iter_num, (X, amps, phases, all_wavelets, targets) in enumerate(test_loader):
+        all_wavelets = all_wavelets.cuda(non_blocking=True).float()
+        ap = np.concatenate([amps, phases], axis=1)
+        X = X.cuda(non_blocking=True).float()  # Ensure X is moved to GPU as well
         targets = targets.cuda(non_blocking=True).long()
-
         optimizer.zero_grad()
 
-        preds = torch.softmax(model(X, ap), dim=1)[:, 1]
+        # Compose model input according to arguments
+        if image and deep:
+            model_input = X
+        elif image and dft:
+            model_input = np.concatenate([X.cpu().numpy(), ap], axis=1)  # Concatenate on CPU first
+            model_input = torch.tensor(model_input).cuda(non_blocking=True).float()
+        elif image and wavelet:
+            model_input = X
+            model.encoder.wav = all_wavelets
+        elif deep:
+            model_input = X[:, :3, :, :]  # Only RGB channels
+        elif image:
+            model_input = X
+        elif dft:
+            model_input = torch.tensor(ap).cuda(non_blocking=True).float()  # Convert ap to tensor and move to GPU
+        elif wavelet:
+            model_input = all_wavelets
+
+        optimizer.zero_grad()
+        preds = torch.softmax(model(model_input), dim=1)[:, 1]
         preds = (preds > 0.5) * 1
         
         tp, fp, fn, tn = tp_tn_fp_fn(preds, targets)

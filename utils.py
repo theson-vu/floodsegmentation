@@ -73,6 +73,7 @@ def collate(batch):
     all_amps = []
     all_phases = []
     all_targets = []
+    all_wavelets = []
     
     for augmented_samples in batch:
         for sample in augmented_samples:
@@ -80,14 +81,16 @@ def collate(batch):
             all_targets.append(np.array(sample["mask"]))
             all_amps.append(np.array(sample["amplitude"]))
             all_phases.append(np.array(sample["phase"]))   
+            all_wavelets.append(np.array(sample["wavelet"]))
 
     # Convert lists to NumPy arrays and stack them
     all_x_data = torch.tensor(np.stack(all_x_data))
     all_targets = torch.tensor(np.stack(all_targets))
     all_amps = torch.tensor(np.stack(all_amps))
     all_phases = torch.tensor(np.stack(all_phases))
+    all_wavelets = torch.tensor(np.stack(all_wavelets))
 
-    return all_x_data, all_amps, all_phases, all_targets
+    return all_x_data, all_amps, all_phases, all_wavelets, all_targets
 
 
 class AverageMeter(object):
