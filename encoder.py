@@ -149,7 +149,7 @@ class SingleEncoder(nn.Module, EncoderMixin):
     
     def forward(self, x_img):
         # Process the original image encoder
-        if self._in_channels == 24:
+        if self._in_channels == 8:
             img_enc_1 = self.img_enc_conv_01(x_img)
         else:
             img_enc_1 = self.img_enc_conv_01(self.down_sample(x_img))
@@ -164,52 +164,52 @@ class SingleEncoder(nn.Module, EncoderMixin):
     def residual_block(in_channels, out_channels):
         return ResidualBlock(in_channels, out_channels)
 
-class SingleEncoderWav(nn.Module, EncoderMixin):
-    def __init__(self, img_channels,depth=4, **kwargs):
+class EncoderWav(nn.Module, EncoderMixin):
+    def __init__(self, img_channels, depth=4, single=False, **kwargs):
         super().__init__(**kwargs)
+        self.single = single
         self._depth = depth
-        self.X = None
         self._in_channels = img_channels  # Required for EncoderMixin
-        self._out_channels =[self._in_channels, 64, 128, 256, 512, 1024]  # Output channels at each stage
-        self.img_enc_conv_01 = self.residual_block(img_channels, 64)
-        self.img_enc_conv_02 = self.residual_block(64, 128)
-        self.img_enc_conv_03 = self.residual_block(128, 256)
-        self.img_enc_conv_04 = self.residual_block(256, 512)
-        self.img_enc_conv_05 = self.residual_block(512, 1024)
+        self._out_channels =[self._in_channels * (self.single * 4), 64, 128, 256, 512, 1024]  # Output channels at each stage
+
+        if self.single:
+            self.img_enc_conv_01 = self.residual_block(img_channels * 4, 64)
+        else:
+            self.img_enc_conv_01 = self.residual_block(img_channels + img_channels * 4, 64)
+        self.img_enc_conv_02 = self.residual_block(64 + img_channels * 4, 128)
+        self.img_enc_conv_03 = self.residual_block(128 + img_channels * 4, 256)
+        self.img_enc_conv_04 = self.residual_block(256 + img_channels * 4, 512)
+        self.img_enc_conv_05 = self.residual_block(512 + img_channels * 4, 1024)
 
         # Downsampling
         self.down_sample = nn.MaxPool2d(kernel_size=2, stride=2)
 
     def apply_full_wavelet_transform(self, input_tensor):
-        batch_size, num_channels, _, _ = input_tensor.shape
+        batch_size, num_channels, height, width = input_tensor.shape
         transformed_channels = []
         LL_ = []
 
-        # Loop over the batch and each channel
         for i in range(batch_size):
             for j in range(num_channels):
-                # Extract the single channel (shape [64, 64])
+                # Extract single channel and apply wavelet transform
                 single_channel = input_tensor[i, j, :, :].cpu().detach().numpy()
-                
-                # Apply wavelet transform (dwt2 for 2D)
                 coeffs2 = pywt.dwt2(single_channel, "haar")
                 LL, (LH, HL, HH) = coeffs2
 
-                # Convert all components back to PyTorch tensors
-                LL_tensor = torch.tensor(LL, dtype=torch.float32).to(input_tensor.device)
-                LH_tensor = torch.tensor(LH, dtype=torch.float32).to(input_tensor.device)
-                HL_tensor = torch.tensor(HL, dtype=torch.float32).to(input_tensor.device)
-                HH_tensor = torch.tensor(HH, dtype=torch.float32).to(input_tensor.device)
+                # Convert components to tensors on the input device
+                LL_tensor = torch.tensor(LL, dtype=torch.float32, device=input_tensor.device)
+                LH_tensor = torch.tensor(LH, dtype=torch.float32, device=input_tensor.device)
+                HL_tensor = torch.tensor(HL, dtype=torch.float32, device=input_tensor.device)
+                HH_tensor = torch.tensor(HH, dtype=torch.float32, device=input_tensor.device)
 
-                # Concatenate the four components along the channel dimension
-                transformed = torch.cat((LL_tensor.unsqueeze(0), LH_tensor.unsqueeze(0), 
-                                        HL_tensor.unsqueeze(0), HH_tensor.unsqueeze(0)), dim=0)
+                # Concatenate components into a single tensor for this channel
+                transformed = torch.stack([LL_tensor, LH_tensor, HL_tensor, HH_tensor], dim=0)
 
-                # Append transformed tensor for this channel to the list
+                # Append to lists
                 LL_.append(LL_tensor)
                 transformed_channels.append(transformed)
 
-        # Stack all transformed channels and reshape to (batch_size, num_channels * 4, new_height, new_width)
+        # Stack and reshape the transformed components
         transformed_tensor = torch.stack(transformed_channels).view(batch_size, num_channels * 4, LL_tensor.shape[0], LL_tensor.shape[1])
         transformed_LL = torch.stack(LL_).view(batch_size, num_channels, LL_tensor.shape[0], LL_tensor.shape[1])
 
@@ -217,13 +217,29 @@ class SingleEncoderWav(nn.Module, EncoderMixin):
     
 
     def forward(self, x_img):
-        # Process the original image encoder
-        img_enc_1 = self.img_enc_conv_01(x_img)  # 256x256 
-        img_enc_2 = self.img_enc_conv_02(self.down_sample(img_enc_1))
-        img_enc_3 = self.img_enc_conv_03(self.down_sample(img_enc_2))
-        img_enc_4 = self.img_enc_conv_04(self.down_sample(img_enc_3))
-        img_enc_5 = self.img_enc_conv_05(self.down_sample(img_enc_4))
-    
+        # Create wavelets      
+        LL_1, wav_1 = self.apply_full_wavelet_transform(x_img)
+        LL_2, wav_2 = self.apply_full_wavelet_transform(LL_1)
+        LL_3, wav_3 = self.apply_full_wavelet_transform(LL_2)
+        LL_4, wav_4 = self.apply_full_wavelet_transform(LL_3)
+        _, wav_5 = self.apply_full_wavelet_transform(LL_4)
+
+        # Encoder
+        if self.single:
+            x_img = wav_1
+            img_enc_1 = self.img_enc_conv_01(wav_1)
+            img_enc_2 = self.img_enc_conv_02(cat((self.down_sample(img_enc_1), wav_2), dim=1))
+            img_enc_3 = self.img_enc_conv_03(cat((self.down_sample(img_enc_2), wav_3), dim=1))
+            img_enc_4 = self.img_enc_conv_04(cat((self.down_sample(img_enc_3), wav_4), dim=1))
+            img_enc_5 = self.img_enc_conv_05(cat((self.down_sample(img_enc_4), wav_5), dim=1))
+        else:
+            img_enc_1 = self.img_enc_conv_01(cat((self.down_sample(x_img), wav_1), dim=1))
+            img_enc_2 = self.img_enc_conv_02(cat((self.down_sample(img_enc_1), wav_2), dim=1))
+            img_enc_3 = self.img_enc_conv_03(cat((self.down_sample(img_enc_2), wav_3), dim=1))
+            img_enc_4 = self.img_enc_conv_04(cat((self.down_sample(img_enc_3), wav_4), dim=1))
+            img_enc_5 = self.img_enc_conv_05(cat((self.down_sample(img_enc_4), wav_5), dim=1))
+        
+        #print(x_img.shape, img_enc_1.shape, img_enc_2.shape, img_enc_3.shape, img_enc_4.shape, img_enc_5.shape)
 
         return [x_img, img_enc_1, img_enc_2, img_enc_3, img_enc_4, img_enc_5]
     
@@ -302,11 +318,10 @@ smp.encoders.encoders["dual_encoder_dft"] = {
 }
 
 smp.encoders.encoders["dual_encoder_wav"] = {
-    "encoder": DualEncoderWav,
+    "encoder": EncoderWav,
     "pretrained_settings": None,
     "params": {
         "img_channels": 6,
-        "dft_channels": 24,
     },
 }
 
@@ -319,10 +334,12 @@ smp.encoders.encoders["single_encoder_6"] = {
 }
 
 smp.encoders.encoders["single_encoder_24"] = {
-    "encoder": SingleEncoder,
+    "encoder": EncoderWav,
     "pretrained_settings": None,
     "params": {
-        "img_channels": 24
+        "img_channels": 6,
+        "depth":4,
+        "single": True,
     },
 }
 

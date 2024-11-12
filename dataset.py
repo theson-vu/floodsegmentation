@@ -32,8 +32,8 @@ class Data():
         amp_mean, amp_M2 = None, None
         phase_mean, phase_M2 = None, None
 
-        for path in self.data_paths:                
-            if isinstance(path, str):
+        for path in self.data_paths:
+            if "RFCC.png" in path:
                 img = cv2.imread(path) / 255.0
             else:
                 img = merge_tif(path)
@@ -79,7 +79,6 @@ class Data():
         std = np.sqrt(M2 / (n_images - 1))
         amp_std = np.sqrt(amp_M2 / (n_images - 1))
         phase_std = np.sqrt(phase_M2 / (n_images - 1))
-
         return mean, std, amp_mean, amp_std, phase_mean, phase_std
 
     def compute_amplitude_phase(self, image_channel):
@@ -136,7 +135,7 @@ class Data():
             
             for i, path in enumerate(self.data_paths):
                 samples = []
-                if isinstance(path, str):
+                if "RFCC.png" in path:
                     img = cv2.imread(path) / 255.0
                 else:
                     img = merge_tif(path)
@@ -292,6 +291,7 @@ def get_paths(fraction=1, bands=["B2.tif", "B3.tif", "B4.tif",  "B8.tif", "B10.t
     for png in label_paths:
         path = png.replace("LabelWater.tif", bands[0])
         flat_img = np.ravel(cv2.imread(path))
+        #flat_img = np.ravel(tifffile.imread(path))
         if np.sum(flat_img == 0) / len(flat_img) <= 0.5:
             filtered_paths.append(png)
 
@@ -323,8 +323,8 @@ def get_paths(fraction=1, bands=["B2.tif", "B3.tif", "B4.tif",  "B8.tif", "B10.t
 
 
 def create_splits(train_percentage=0.6, val_percentage=0.2, test_percentage=0.2, seed=1337):
-    label_paths, img_paths = get_paths(fraction=1, seed=seed) #, bands=["SWIRP.png"])
-    #print(len(label_paths), len(img_paths))
+    label_paths, img_paths = get_paths(fraction=1, seed=seed)  #, bands=["RFCC.png"])
+    img_paths = [img_paths[0]]  # Comment out if using .tif
 
     img_paths_train = [row[: int(train_percentage * len(label_paths))] for row in img_paths]
     img_paths_val = [row[int(train_percentage * len(label_paths)): int((train_percentage + val_percentage) * len(label_paths))] for row in img_paths]

@@ -90,6 +90,7 @@ if __name__ == "__main__":
         ], additional_targets={'mask': 'image'})
 
     path = "C:/Users/The Son/Desktop/Uni/Berlin/Masterarbeit/Data/model_data/"
+    #path = "D:/Uni/Masterarbeit/final_sen2/"
     train_dataset = S2Dataset(img_paths_train, label_paths_train, data_path=path+"train", wavelet=wavelet, transforms=train_transforms, num_augmentations=num_augmentations, dft_flag=dft)
     norm = [train_dataset.mean, train_dataset.std, train_dataset.amp_mean, train_dataset.amp_std, train_dataset.phase_mean, train_dataset.phase_std]
 
@@ -201,7 +202,6 @@ if __name__ == "__main__":
                 model_input = torch.tensor(model_input).cuda(non_blocking=True).float()
             elif image and wavelet:
                 model_input = X
-                model.encoder.wav = all_wavelets
             elif deep:
                 model_input = X[:, :3, :, :]  # Only RGB channels
             elif image:
@@ -209,7 +209,7 @@ if __name__ == "__main__":
             elif dft:
                 model_input = torch.tensor(ap).cuda(non_blocking=True).float()  # Convert ap to tensor and move to GPU
             elif wavelet:
-                model_input = all_wavelets
+                model_input = X
     
             # Ensure model_input is a torch tensor without re-wrapping
             preds = model(model_input)
@@ -250,7 +250,6 @@ if __name__ == "__main__":
                 model_input = torch.tensor(model_input).cuda(non_blocking=True).float()
             elif image and wavelet:
                 model_input = X
-                model.encoder.wav = all_wavelets
             elif deep:
                 model_input = X[:, :3, :, :]  # Only RGB channels
             elif image:
@@ -258,7 +257,7 @@ if __name__ == "__main__":
             elif dft:
                 model_input = torch.tensor(ap).cuda(non_blocking=True).float()  # Convert ap to tensor and move to GPU
             elif wavelet:
-                model_input = all_wavelets
+                model_input = X
             
             optimizer.zero_grad()
             preds = model(model_input)
@@ -403,7 +402,6 @@ if __name__ == "__main__":
             model_input = torch.tensor(model_input).cuda(non_blocking=True).float()
         elif image and wavelet:
             model_input = X
-            model.encoder.wav = all_wavelets
         elif deep:
             model_input = X[:, :3, :, :]  # Only RGB channels
         elif image:
@@ -411,7 +409,7 @@ if __name__ == "__main__":
         elif dft:
             model_input = torch.tensor(ap).cuda(non_blocking=True).float()  # Convert ap to tensor and move to GPU
         elif wavelet:
-            model_input = all_wavelets
+            model_input = X
 
         optimizer.zero_grad()
         preds = torch.softmax(model(model_input), dim=1)[:, 1]
@@ -467,3 +465,4 @@ if __name__ == "__main__":
 
         plt.tight_layout()
         plt.savefig(f'trained_models/{experiment_name}/{label_path.split("\\")[-2]}.png')
+        
