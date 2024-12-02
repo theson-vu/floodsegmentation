@@ -12,10 +12,7 @@ class XEDiceLoss(nn.Module):
         self.alpha = alpha
         self.EPS = EPS
 
-    def forward(self, preds, targets):
-        # Convert targets to float32 for Cross-Entropy loss
-        #targets = targets.float()
-        
+    def forward(self, preds, targets):        
         # Compute Cross-Entropy loss
         xe_loss = self.xe(preds, targets)
 

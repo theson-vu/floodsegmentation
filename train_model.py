@@ -28,6 +28,7 @@ if __name__ == "__main__":
     parser.add_argument('--image', action="store_true")
     parser.add_argument('--wavelet', type=str, default="")
     parser.add_argument('--deep', action="store_true")
+    parser.add_argument('--sen1', action="store_true")
 
     train_percentage, val_percentage, test_percentage = 0.5, 0.25, 0.25
     train_crop_size = 128
@@ -46,6 +47,7 @@ if __name__ == "__main__":
     wavelet = args.wavelet
     deep = args.deep
     image = args.image
+    sen1 = args.sen1
 
     #wandb.login()
     wandb.init(project="Master", name=experiment_name)
@@ -112,7 +114,7 @@ if __name__ == "__main__":
     if image and deep:
         print("Using dual_resnet_encoder")
         model = smp.Unet(
-            encoder_name="dual_resnet_encoder",
+            encoder_name=f"dual_resnet_encoder{".2" if sen1 else ""}",
             encoder_depth=5,
             encoder_weights=None,
             classes=2,
@@ -122,7 +124,7 @@ if __name__ == "__main__":
     elif image and wavelet:
         print("Using dual_encoder_wav")
         model = smp.Unet(
-            encoder_name="dual_encoder_wav",
+            encoder_name=f"dual_encoder_wav{".2" if sen1 else ""}",
             encoder_depth=5,
             encoder_weights=None,
             classes=2,
@@ -132,7 +134,7 @@ if __name__ == "__main__":
     elif image and dft:
         print("Using dual_encoder_dft")
         model = smp.Unet(
-            encoder_name="dual_encoder_dft",
+            encoder_name=f"dual_encoder_dft{".2" if sen1 else ""}",
             encoder_depth=5,
             encoder_weights=None,
             classes=2,
@@ -156,7 +158,7 @@ if __name__ == "__main__":
             n = 24
         print(f"Using single_encoder_{n}")
         model = smp.Unet(
-            encoder_name=f"single_encoder_{n}",
+            encoder_name=f"single_encoder_{n}{".2" if sen1 else ""}",
             encoder_weights=None,
             classes=2,
             decoder_attention_type="scse",
@@ -331,7 +333,7 @@ if __name__ == "__main__":
     # Select model
     if image and deep:
         model = smp.Unet(
-            encoder_name="dual_resnet_encoder",
+            encoder_name=f"dual_resnet_encoder{".2" if sen1 else ""}",
             encoder_depth=5,
             encoder_weights=None,
             classes=2,
@@ -340,7 +342,7 @@ if __name__ == "__main__":
         )
     elif image and wavelet:
         model = smp.Unet(
-            encoder_name="dual_encoder_wav",
+            encoder_name=f"dual_encoder_wav{".2" if sen1 else ""}",
             encoder_depth=5,
             encoder_weights=None,
             classes=2,
@@ -349,7 +351,7 @@ if __name__ == "__main__":
         )
     elif image and dft:
         model = smp.Unet(
-            encoder_name="dual_encoder_dft",
+            encoder_name=f"dual_encoder_dft{".2" if sen1 else ""}",
             encoder_depth=5,
             encoder_weights=None,
             classes=2,
@@ -370,7 +372,7 @@ if __name__ == "__main__":
         elif wavelet:
             n = 24
         model = smp.Unet(
-            encoder_name=f"single_encoder_{n}",
+            encoder_name=f"single_encoder_{n}{".2" if sen1 else ""}",
             encoder_weights=None,
             classes=2,
             decoder_attention_type="scse",

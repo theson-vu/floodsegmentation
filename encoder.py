@@ -163,6 +163,38 @@ class SingleEncoder(nn.Module, EncoderMixin):
     @staticmethod
     def residual_block(in_channels, out_channels):
         return ResidualBlock(in_channels, out_channels)
+    
+
+class SingleEncoder2(nn.Module, EncoderMixin):
+    def __init__(self, img_channels, depth=5, **kwargs):
+        super().__init__(**kwargs)
+        self._depth = depth
+        self._in_channels = img_channels  # Required for EncoderMixin
+        self._out_channels = [self._in_channels, 64, 128, 256, 512, 1024]  # Output channels at each stage
+        
+        # Convolutional blocks with residual connections
+        self.img_enc_conv_01 = self.residual_block(img_channels, 64)
+        self.img_enc_conv_02 = self.residual_block(64, 128)
+        self.img_enc_conv_03 = self.residual_block(128, 256)
+        self.img_enc_conv_04 = self.residual_block(256, 512)
+        self.img_enc_conv_05 = self.residual_block(512, 1024)
+
+        # Downsampling layer
+        self.down_sample = nn.MaxPool2d(kernel_size=2, stride=2)
+
+    def forward(self, x_img):
+        # Process each encoding layer: convolution first, downsampling after
+        img_enc_1 = self.img_enc_conv_01(x_img)               # Apply the first convolution
+        img_enc_2 = self.img_enc_conv_02(self.down_sample(img_enc_1))   # Downsample after convolution
+        img_enc_3 = self.img_enc_conv_03(self.down_sample(img_enc_2))
+        img_enc_4 = self.img_enc_conv_04(self.down_sample(img_enc_3))
+        img_enc_5 = self.img_enc_conv_05(self.down_sample(img_enc_4))
+
+        return [x_img, img_enc_1, img_enc_2, img_enc_3, img_enc_4, img_enc_5]
+    
+    @staticmethod
+    def residual_block(in_channels, out_channels):
+        return ResidualBlock(in_channels, out_channels)
 
 class EncoderWav(nn.Module, EncoderMixin):
     def __init__(self, img_channels, depth=4, single=False, **kwargs):
@@ -366,6 +398,68 @@ smp.encoders.encoders["dual_resnet_encoder"] = {
     "params": {
         "depth": 5,                # Depth of the encoder
         "in_channels": 6,
+        "out_channels": (6, 64+3, 256+64, 512+256, 1024+512, 2048+1024),
+    },
+}
+
+smp.encoders.encoders["dual_encoder_dft.2"] = {
+    "encoder": DualEncoder,
+    "pretrained_settings": None,
+    "params": {
+        "img_channels": 2,
+        "dft_channels": 4,
+    },
+}
+
+smp.encoders.encoders["dual_encoder_wav.2"] = {
+    "encoder": EncoderWav,
+    "pretrained_settings": None,
+    "params": {
+        "img_channels": 2,
+    },
+}
+
+smp.encoders.encoders["single_encoder_6.2"] = {
+    "encoder": SingleEncoder,
+    "pretrained_settings": None,
+    "params": {
+        "img_channels": 2
+    },
+}
+
+smp.encoders.encoders["single_encoder_24.2"] = {
+    "encoder": EncoderWav,
+    "pretrained_settings": None,
+    "params": {
+        "img_channels": 2,
+        "depth":4,
+        "single": True,
+    },
+}
+
+
+smp.encoders.encoders["single_encoder_12.2"] = {
+    "encoder": SingleEncoder,
+    "pretrained_settings": None,
+    "params": {
+        "img_channels": 4
+    },
+}
+
+smp.encoders.encoders["dual_resnet_encoder.2"] = {
+    "encoder": DualResNetEncoder,  # Reference to the class
+    "pretrained_settings": {         # Define any pretrained settings
+        "imagenet": {
+            "url": None,            # URL for pretrained weights (if applicable)
+            "input_space": "RGB",   # Color space of input images
+            "input_range": [0, 1],  # Normalization range
+            "mean": [0.485, 0.456, 0.406],  # Mean for normalization
+            "std": [0.229, 0.224, 0.225],    # Standard deviation for normalization
+        }
+    },
+    "params": {
+        "depth": 5,                # Depth of the encoder
+        "in_channels": 3,
         "out_channels": (6, 64+3, 256+64, 512+256, 1024+512, 2048+1024),
     },
 }
