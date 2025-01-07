@@ -75,6 +75,7 @@ class DualResNetEncoder(nn.Module, smp.encoders._base.EncoderMixin):
     def residual_block(in_channels, out_channels):
         return ResidualBlock(in_channels, out_channels)
 
+
 class DualEncoder(nn.Module, EncoderMixin):
     def __init__(self, img_channels, dft_channels, depth=4, **kwargs):
         super().__init__(**kwargs)        
@@ -130,6 +131,7 @@ class DualEncoder(nn.Module, EncoderMixin):
     def residual_block(in_channels, out_channels):
         return ResidualBlock(in_channels, out_channels)
 
+
 class SingleEncoder(nn.Module, EncoderMixin):
     def __init__(self, img_channels, depth=5, **kwargs):
         super().__init__(**kwargs)
@@ -148,7 +150,6 @@ class SingleEncoder(nn.Module, EncoderMixin):
         self.up_sample = nn.ConvTranspose2d(in_channels=24, out_channels=24, kernel_size=4, stride=2, padding=1)
     
     def forward(self, x_img):
-        # Process the original image encoder
         if self._in_channels == 8:
             img_enc_1 = self.img_enc_conv_01(x_img)
         else:
@@ -340,6 +341,7 @@ class DualEncoderWav(nn.Module, EncoderMixin):
         return ResidualBlock(in_channels, out_channels)
 
 
+# Create encoder initializations. Mostly for naming and channel adaptations.
 smp.encoders.encoders["dual_encoder_dft"] = {
     "encoder": DualEncoder,
     "pretrained_settings": None,

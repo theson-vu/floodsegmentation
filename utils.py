@@ -28,35 +28,6 @@ class XEDiceLoss(nn.Module):
         return self.alpha * xe_loss + (1 - self.alpha) * dice_loss 
     
 
-class ResNet34FeatureExtractor(nn.Module):
-    def __init__(self, output_channels):
-        super(ResNet34FeatureExtractor, self).__init__()
-        self.resnet = models.resnet34(pretrained=True)
-        
-        # Remove the fully connected layer
-        self.resnet = nn.Sequential(*list(self.resnet.children())[:-2])
-        
-        # Upsample layers to match the input dimensions
-        self.upsample1 = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
-        self.upsample2 = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
-        self.upsample3 = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
-        self.upsample4 = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
-        self.upsample5 = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
-        
-        # Convolutional layer to adjust the number of channels
-        self.conv1x1 = nn.Conv2d(512, output_channels, kernel_size=1)
-
-    def forward(self, x):
-        x = self.resnet(x)
-        x = self.upsample1(x)
-        x = self.upsample2(x)
-        x = self.upsample3(x)
-        x = self.upsample4(x)
-        x = self.upsample5(x)
-        x = self.conv1x1(x)
-        return x
-    
-
 def tp_tn_fp_fn(preds, targets):
     tp = torch.sum(preds * targets)
     fp = torch.sum(preds) - tp
@@ -66,12 +37,14 @@ def tp_tn_fp_fn(preds, targets):
 
 
 def collate(batch):
+    # Initialize lists to store different data components
     all_x_data = []
     all_amps = []
     all_phases = []
     all_targets = []
     all_wavelets = []
-    
+
+    # Iterate through the batch and extract data from each sample
     for augmented_samples in batch:
         for sample in augmented_samples:
             all_x_data.append(np.array(sample["image"]))
@@ -95,7 +68,6 @@ class AverageMeter(object):
     Computes and stores the average and current value
     Adapted from https://github.com/pytorch/examples/blob/master/imagenet/main.py
     """
-
     def __init__(self):
         self.reset()
 
