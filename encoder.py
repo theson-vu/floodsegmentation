@@ -150,10 +150,7 @@ class SingleEncoder(nn.Module, EncoderMixin):
         self.up_sample = nn.ConvTranspose2d(in_channels=24, out_channels=24, kernel_size=4, stride=2, padding=1)
     
     def forward(self, x_img):
-        if self._in_channels == 8:
-            img_enc_1 = self.img_enc_conv_01(x_img)
-        else:
-            img_enc_1 = self.img_enc_conv_01(self.down_sample(x_img))
+        img_enc_1 = self.img_enc_conv_01(self.down_sample(x_img))
         img_enc_2 = self.img_enc_conv_02(self.down_sample(img_enc_1))
         img_enc_3 = self.img_enc_conv_03(self.down_sample(img_enc_2))
         img_enc_4 = self.img_enc_conv_04(self.down_sample(img_enc_3))
@@ -165,37 +162,6 @@ class SingleEncoder(nn.Module, EncoderMixin):
     def residual_block(in_channels, out_channels):
         return ResidualBlock(in_channels, out_channels)
     
-
-class SingleEncoder2(nn.Module, EncoderMixin):
-    def __init__(self, img_channels, depth=5, **kwargs):
-        super().__init__(**kwargs)
-        self._depth = depth
-        self._in_channels = img_channels  # Required for EncoderMixin
-        self._out_channels = [self._in_channels, 64, 128, 256, 512, 1024]  # Output channels at each stage
-        
-        # Convolutional blocks with residual connections
-        self.img_enc_conv_01 = self.residual_block(img_channels, 64)
-        self.img_enc_conv_02 = self.residual_block(64, 128)
-        self.img_enc_conv_03 = self.residual_block(128, 256)
-        self.img_enc_conv_04 = self.residual_block(256, 512)
-        self.img_enc_conv_05 = self.residual_block(512, 1024)
-
-        # Downsampling layer
-        self.down_sample = nn.MaxPool2d(kernel_size=2, stride=2)
-
-    def forward(self, x_img):
-        # Process each encoding layer: convolution first, downsampling after
-        img_enc_1 = self.img_enc_conv_01(x_img)               # Apply the first convolution
-        img_enc_2 = self.img_enc_conv_02(self.down_sample(img_enc_1))   # Downsample after convolution
-        img_enc_3 = self.img_enc_conv_03(self.down_sample(img_enc_2))
-        img_enc_4 = self.img_enc_conv_04(self.down_sample(img_enc_3))
-        img_enc_5 = self.img_enc_conv_05(self.down_sample(img_enc_4))
-
-        return [x_img, img_enc_1, img_enc_2, img_enc_3, img_enc_4, img_enc_5]
-    
-    @staticmethod
-    def residual_block(in_channels, out_channels):
-        return ResidualBlock(in_channels, out_channels)
 
 class EncoderWav(nn.Module, EncoderMixin):
     def __init__(self, img_channels, depth=4, single=False, **kwargs):

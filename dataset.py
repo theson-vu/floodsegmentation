@@ -27,6 +27,7 @@ class Data():
   
 
     def get_dataset_mean_std(self):
+        # Compute mean while not overloading RAM
         n_images = 0
         mean, M2 = None, None
         amp_mean, amp_M2 = None, None
@@ -323,7 +324,7 @@ def get_paths(fraction=1, bands=["B2.tif", "B3.tif", "B4.tif",  "B8.tif", "B10.t
 
 
 def create_splits(train_percentage=0.6, val_percentage=0.2, test_percentage=0.2, seed=1337):
-    label_paths, img_paths = get_paths(fraction=1, seed=seed)  #, bands=["RFCC.png"])
+    label_paths, img_paths = get_paths(fraction=1, seed=seed)  # Use bands=["RFCC.png"] for sen1
     img_paths = [img_paths[0]]  # Comment out if using .tif
 
     img_paths_train = [row[: int(train_percentage * len(label_paths))] for row in img_paths]

@@ -30,6 +30,7 @@ if __name__ == "__main__":
     parser.add_argument('--deep', action="store_true")
     parser.add_argument('--sen1', action="store_true")
 
+    # hyperparameters
     train_percentage, val_percentage, test_percentage = 0.5, 0.25, 0.25
     train_crop_size = 128
     num_workers = 2
@@ -49,7 +50,7 @@ if __name__ == "__main__":
     image = args.image
     sen1 = args.sen1
 
-    #wandb.login()
+    # Logging
     wandb.init(project="Master", name=experiment_name)
     wandb.log({
         "dft": dft,
@@ -66,6 +67,7 @@ if __name__ == "__main__":
         "split percentages": (train_percentage, val_percentage, test_percentage),
         })
     
+    # Setting seeds
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -76,6 +78,7 @@ if __name__ == "__main__":
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
 
+    # Create splits
     img_paths_train, img_paths_val, img_paths_test, label_paths_train, label_paths_val, label_paths_test = create_splits(
         train_percentage=train_percentage,
         val_percentage=val_percentage,
@@ -83,6 +86,7 @@ if __name__ == "__main__":
         seed=seed
         )
 
+    # Set transformations
     train_transforms = A.ReplayCompose(
         [
             A.RandomCrop(train_crop_size, train_crop_size),
@@ -91,6 +95,8 @@ if __name__ == "__main__":
             A.VerticalFlip()
         ], additional_targets={'mask': 'image'})
 
+
+    # Create Dataset Class for dataloader
     path = "C:/Users/The Son/Desktop/Uni/Berlin/Masterarbeit/Data/model_data/"
     #path = "D:/Uni/Masterarbeit/final_sen2/"
     train_dataset = S2Dataset(img_paths_train, label_paths_train, data_path=path+"train", wavelet=wavelet, transforms=train_transforms, num_augmentations=num_augmentations, dft_flag=dft)
@@ -213,7 +219,6 @@ if __name__ == "__main__":
             elif wavelet:
                 model_input = X
     
-            # Ensure model_input is a torch tensor without re-wrapping
             preds = model(model_input)
 
             # Move to GPU
@@ -283,6 +288,7 @@ if __name__ == "__main__":
         
         wandb.log({"iou_train": iou_global,
                 "loss_train": losses.avg})
+        
         ## When validation IoU improved, save model. If not, increment the lr scheduler and early stopping counters
         early_stopping_metric = iou_global
         if curr_epoch_num > 6:
@@ -442,7 +448,8 @@ if __name__ == "__main__":
 
     torch.cuda.empty_cache()
 
-    show_how_many = 20
+    # Optional visualization of random samples
+    """show_how_many = 20
     alpha = 0.5
     for k in range(show_how_many):
         rand_int = np.random.randint(len(test_dataset))
@@ -466,5 +473,5 @@ if __name__ == "__main__":
 
 
         plt.tight_layout()
-        plt.savefig(f'trained_models/{experiment_name}/{label_path.split("\\")[-2]}.png')
+        plt.savefig(f'trained_models/{experiment_name}/{label_path.split("\\")[-2]}.png')"""
         
